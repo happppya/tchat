@@ -219,6 +219,22 @@
         
         const messagingWindow = document.getElementById("messagingWindow");
         
+        const socket = new WebSocket('https://stt065zt-8080.use.devtunnels.ms/');
+
+        socket.addEventListener('message', (event) => {
+          console.log("Message received: ", event.data);
+          const incomingMessage = JSON.parse(event.data);
+          if (incomingMessage.type == 'message') {
+            renderSingularNewMessage(incomingMessage);
+          } else {
+            console.error(incomingMessage.messageText);
+          }
+        });
+
+        function sendWSMessage(data) {
+          socket.send(data);
+        }
+        
         function renderMessages(messages) {
           messagingWindow.innerHTML = "";
         
@@ -243,14 +259,14 @@
           msgBox.className = "message-item";
       
           const name = document.createElement("strong");
-          name.textContent = (msg.display_name || "Unknown") + ": ";
+          name.textContent = (msg.displayNameText || "Unknown") + ": ";
       
           const text = document.createElement("span");
-          text.textContent = msg.message_text || "";
+          text.textContent = msg.messageText || "";
       
           msgBox.appendChild(name);
           msgBox.appendChild(text);
-          messagingWindow.appendChild(msgBox);
+          messagingWindow.prepend(msgBox);
         }
 
   async function getMessages() {
@@ -353,13 +369,14 @@
               displayNameText: displayName
             };
 
-            fetch('/api/sendMessage', {
+            /*fetch('/api/sendMessage', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify(payload)
-            });
+            });*/
+            sendWSMessage(JSON.stringify(payload));
             selectedGif = null;
             selectedGifPreview.innerHTML = "";
           }
