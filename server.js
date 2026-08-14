@@ -3,11 +3,13 @@ const http = require('http');
 const { Server } = require('socket.io');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
+const { WebSocketServer } = require('ws');
 
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+const wss = new WebSocketServer({ port: 8080 });
 let db;
 
 app.use(express.json());
@@ -97,6 +99,51 @@ app.get('/api/getMessages', async (req, res) => {
         [parseInt(numMessages)]
     );
     res.json(messages);
+});
+
+wss.on('connection', (ws) => {
+  console.log('New client connected!');
+
+  // Listen for messages from this specific client
+  ws.on('message', (message) => {
+    // Incoming messages arrive as Buffers; convert to string
+    const messageString = message.toString();
+    console.log(`Received: ${messageString}`);
+
+    console.log("message received and added from WEBSOCKET not from post");
+    let messageJSON = JSON.parse(messageString);
+    let { messageText, displayNameText } = messageJSON;
+    if (!messageText || !displayNameText) {
+      messageJSON.type = 'error';
+      messageJSON.messageText = 'Either message text or display name is blank';
+      ws.send(JSON.stringify(messageJSON));
+      return;
+    }
+    if (messageText.length > 300) {
+      messageJSON.type = 'error';
+      messageJSON.messageText = 'Message too long';
+      ws.send(JSON.stringify(messageJSON));
+      return;
+    }
+
+    console.log("Message: " + messageText, "Display Name: " + displayNameText);
+
+    const sqliteTextTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    messageJSON.timestamp = sqliteTextTimestamp;
+    messageJSON.type = 'message';
+    addMessageToTable(messageText, displayNameText, sqliteTextTimestamp);
+    wss.clients.forEach((client) => {
+      // Check if the connection is open before sending
+      if (client.readyState === client.OPEN) {
+        client.send(JSON.stringify(messageJSON));
+      }
+    });
+  });
+
+  // Handle client disconnection
+  ws.on('close', () => {
+    console.log('Client has disconnected');
+  });
 });
 
 server.listen(3000, () => {
