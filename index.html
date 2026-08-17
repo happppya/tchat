@@ -48,6 +48,7 @@
       height: 28px;
       box-sizing: border-box;
       padding: 5px 9px;
+      justify-content: flex-end;
       border: 1px solid #d9dce1;
       border-radius: 8px;
       font-family: Inter, Arial, sans-serif;
@@ -58,6 +59,13 @@
     #displayName:focus {
       border-color: #4285f4;
       box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.12);
+    }
+
+    #errorMessage {
+      color: red;
+      padding: 7px 10px;
+      font-family: Inter, Arial, sans-serif;
+      font-size: 12px;
     }
 
     .button-container {
@@ -182,6 +190,7 @@
 <body>
   <h1>Chat </h3>
     <div class="top-bar">
+      <span id="errorMessage"></span>
       <input id="displayName" type="text" placeholder="Display Name" maxlength="30">
     </div>
     <div class="composer">
@@ -219,6 +228,7 @@
       const selectedGifPreview = document.getElementById("selectedGifPreview");
       const box = document.getElementById("message");
       const displayNameField = document.getElementById("displayName");
+      const errorDisplayText = document.getElementById("errorMessage");
       try {
         const savedName = localStorage.getItem("displayName");
         if (savedName) displayNameField.value = savedName.slice(0, 30);
@@ -227,12 +237,12 @@
       }
 
       if (Notification.permission !== "granted" && Notification.permission !== "denied") {
-          Notification.requestPermission().then(permission => {
-            if (permission === "granted") {
-              console.log("Notification permission accepted.");
-            }
-          });
-        }
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            console.log("Notification permission accepted.");
+          }
+        });
+      }
 
       const messagingWindow = document.getElementById("messagingWindow");
 
@@ -266,6 +276,7 @@
         if (incomingMessage.type == 'message') {
           const msgText = incomingMessage.messageText;
           renderSingularNewMessage(incomingMessage);
+          errorMessage.innerHTML = "";
 
           if (document.hidden) {
             if (Notification.permission == "granted") {
@@ -277,7 +288,7 @@
 
               const notification = new Notification(incomingMessage.displayNameText, notificationOptions);
 
-              notification.onClick() = function(event) {
+              notification.onClick() = function (event) {
                 event.preventDefault();
                 window.focus();
                 notification.close();
@@ -286,6 +297,7 @@
           }
         } else {
           console.error(incomingMessage.messageText);
+          errorDisplayText.innerHTML = incomingMessage.messageText;
         }
       });
 
