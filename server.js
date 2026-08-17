@@ -76,10 +76,10 @@ app.post('/api/sendMessage', (req, res) => {
     console.log("send message post received");
     const { messageText, displayNameText } = req.body;
     if (!messageText || !displayNameText) {
-        return res.status(400).json({ error: 'Missing messageText or displayNameText' });
+        return res.status(400).json({ error: 'Must have display name and a message' });
     }
     if (messageText.length > 300) {
-        return res.status(400).json({ error: 'messageText exceeds 300 characters' });
+        return res.status(400).json({ error: 'Message exceeds 300 characters' });
     }
 
     console.log("Message: " + messageText, "Display Name: " + displayNameText);
