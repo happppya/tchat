@@ -1,0 +1,9 @@
+{
+    "manifest_version": 3,
+    "name": "Team Chat",
+    "version": "1.0",
+    "description": "Quick access team chat extension",
+    "action": {
+        "default_popup": "popup.html"
+    }
+}
