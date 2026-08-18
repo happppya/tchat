@@ -2,8 +2,12 @@
     "manifest_version": 3,
     "name": "Team Chat",
     "version": "1.0",
-    "description": "Quick access team chat extension",
+    "description": "Quick access team chat",
     "action": {
         "default_popup": "popup.html"
-    }
+    },
+    "host_permissions": [
+        "http://localhost:3000/*",
+        "ws://localhost:8080/*"
+    ]
 }
