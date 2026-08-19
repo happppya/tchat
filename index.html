@@ -65,8 +65,15 @@
 
     .top-bar {
       display: flex;
-      justify-content: flex-end;
       margin-bottom: 8px;
+    }
+
+    .groupchat-title-bar {
+      flex: 1;
+      font-size: 22px;
+      font-weight: 600;
+      color: #e3e3ff;
+      padding: 0px 10px;
     }
 
     .side-bar {
@@ -138,6 +145,7 @@
     }
 
     #displayName {
+      margin-left: auto;
       width: 100px;
       height: 28px;
       box-sizing: border-box;
@@ -162,6 +170,7 @@
     }
 
     #errorMessage {
+      margin-left: auto;
       color: red;
       padding: 7px 10px;
       font-family: Inter, Arial, sans-serif;
@@ -324,6 +333,7 @@
     </div>
     <div id="main_content" class="main-content hidden">
       <div class="top-bar">
+        <h1 id="groupchatTitle" class="groupchat-title-bar">Lorem Ipsum</h1>
         <span id="errorMessage"></span>
         <input id="displayName" type="text" placeholder="Display Name" maxlength="30">
       </div>
@@ -526,12 +536,16 @@
           throw new Error('Failed to fetch messages');
         }
 
+        const groupchatInfoResponse = await fetch(`/api/getGCInfo?groupChatId=${Number(groupChatId)}`);
+        const groupchatInfo = await groupchatInfoResponse.json();
+
         togglePlaceholder(false);
 
         const messages = data;
         console.log(messages);
 
         renderMessages(messages);
+        groupchatTitle.textContent = groupchatInfo.name || "Group Chat";
         return messages;
       } catch (error) {
         console.error(error);
