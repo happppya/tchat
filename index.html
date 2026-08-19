@@ -322,9 +322,7 @@
       <h1 class="title-text">Chat </h1>
       <button id="createGcButton">Create Group Chat</button>
       <input id="groupchatId" type="number" name="gc_id" placeholder="Room Code">
-      <ul>
-        <li><button class="gc-button">Lorem Ipsum Gc</button></li>
-        <li><button class="gc-button">Placeholder Gc</button></li>
+      <ul id="savedChats">
       </ul>
     </div>
     <div id="placeholder_text" class="placeholder-text">
@@ -372,6 +370,7 @@
     const placeholderText = document.getElementById("placeholder_text");
     const mainContent = document.getElementById("main_content");
     const groupchatIdField = document.getElementById("groupchatId");
+    const savedChatList = document.getElementById("savedChats");
     try {
       const savedName = localStorage.getItem("displayName");
       if (savedName) displayNameField.value = savedName.slice(0, 30);
@@ -440,7 +439,7 @@
             };
             console.log("tried notification");
 
-            let notification = new Notification(incomingMessage.displayNameText, notificationOptions);
+            let notification = new Notification(incomingMessage.displayNameText + `(${incomingMessage.groupChatId})`, notificationOptions);
 
             notification.onclick = function (event) {
               event.preventDefault();
@@ -486,6 +485,48 @@
       });
     }
 
+    function addGcToStorage(groupChatId, groupChatName) {
+      const gc = { 
+        id: groupChatId,
+        name: groupChatName
+      };
+      let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
+      if (savedGCs) {
+        const index = savedGCs.findIndex(item => item.id == groupChatId);
+        if (index !== -1) {
+          savedGCs.splice(index, 1);
+        }
+        savedGCs.push(gc);
+      } else {
+        savedGCs = [gc];
+      }
+      localStorage.setItem("savedGCList", JSON.stringify(savedGCs));
+    }
+
+    function renderNewGcButton(groupChatId, groupChatName) {
+      const existingGcButton = document.getElementById(String(groupChatId));
+      if (existingGcButton) existingGcButton.remove();
+      const gcButton = document.createElement("li");
+      gcButton.onclick = function() {
+        currentGroupChatId = groupChatId;
+        getMessages(groupChatId);
+      }
+      gcButton.textContent = groupChatName;
+      gcButton.className = "gc-button";
+      gcButton.id = String(groupChatId);
+      savedChatList.prepend(gcButton);
+    }
+
+    function renderAllSavedGCs() {
+      let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
+      if(savedGCs) {
+        savedGCs.forEach((gc) => {
+          renderNewGcButton(gc.id, gc.name);
+        });
+      }
+    }
+    renderAllSavedGCs();
+
     function renderSingularNewMessage(msg) {
       const msgBox = document.createElement("div");
       msgBox.className = "message-item";
@@ -518,6 +559,12 @@
       }
     }
 
+    async function getGCInfo(groupChatId) {
+      const groupchatInfoResponse = await fetch(`/api/getGCInfo?groupChatId=${Number(groupChatId)}`);
+      const groupchatInfo = await groupchatInfoResponse.json();
+      return groupchatInfo;
+    }
+
     async function getMessages(groupChatId, numMessages = 20) {
       try {
         const response = await fetch(`/api/getMessages?groupChatId=${Number(groupChatId)}&numMessages=${numMessages}`);
@@ -536,13 +583,12 @@
           throw new Error('Failed to fetch messages');
         }
 
-        const groupchatInfoResponse = await fetch(`/api/getGCInfo?groupChatId=${Number(groupChatId)}`);
-        const groupchatInfo = await groupchatInfoResponse.json();
-
         togglePlaceholder(false);
 
         const messages = data;
         console.log(messages);
+
+        groupchatInfo = await getGCInfo(groupChatId);
 
         renderMessages(messages);
         groupchatTitle.textContent = groupchatInfo.name || "Group Chat";
@@ -618,7 +664,7 @@
       }
     }
 
-    box.addEventListener("keydown", function (event) {
+    box.addEventListener("keydown", async function (event) {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         const message = box.value.trim();
@@ -642,6 +688,9 @@
           },
           body: JSON.stringify(payload)
         });*/
+        const groupchatInfo = await getGCInfo(currentGroupChatId);
+        addGcToStorage(currentGroupChatId, groupchatInfo.name);
+        renderNewGcButton(currentGroupChatId, groupchatInfo.name);
         sendWSMessage(JSON.stringify(payload));
         selectedGif = null;
         selectedGifPreview.innerHTML = "";
@@ -651,6 +700,7 @@
       this.style.height = "40px";
       this.style.height = (this.scrollHeight + 2 > 40 ? this.scrollHeight + 2 : 40) + "px";
     });
+
     groupchatIdField.addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
