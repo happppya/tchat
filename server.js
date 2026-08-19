@@ -104,8 +104,20 @@ async function addMessageToTable(groupChatId, messageText, displayNameText, time
 
 async function createGroupChat(gc_id, gc_name) {
     const query = `INSERT INTO group_chats (id, name) VALUES (?, ?)`;
-    db.run(query, [gc_id, gc_name]);
+    await db.run(query, [gc_id, gc_name]);
     console.log("gc created");
+}
+
+async function destroyGroupChat(gc_id) {
+    const query = `DELETE FROM group_chats WHERE id = ?; DELETE FROM messages WHERE group_chat_id = ?`;
+    await db.run(query, [gc_id, gc_id]);
+    console.log("gc destroyed");
+}
+
+async function clearAllGroupChats() {
+    const query = `DELETE FROM group_chats; DELETE FROM messages`;
+    await db.run(query);
+    console.log("all gcs destroyed");
 }
 
 async function validateGCID(gc_id) {
@@ -143,6 +155,12 @@ app.get('/api/getGCInfo', async (req, res) => {
 
     const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [parseInt(groupChatId)]);
     res.json(groupChat);
+});
+
+app.post('/api/createGC', async (req, res) => {
+  const data = req.body;
+  await createGroupChat(data.id, data.name);
+  res.status(201).json({ message: 'Group chat created successfully' });
 });
 
 wss.on('connection', (ws) => {
@@ -242,6 +260,14 @@ rl.on('line', (line) => {
         createGroupChat(gc_id, gc_name);
       }
       break;
+    case 'destroy':
+      if (args.length < 1) {
+        console.log('Usage: destroy <gc_id>');
+      } else {
+        const [gc_id] = args;
+        destroyGroupChat(gc_id);
+      }
+      break;
     case 'db':
       if (args.length < 1) {
         console.log('Usage: db <query>');
@@ -251,9 +277,9 @@ rl.on('line', (line) => {
         console.log('Query executed successfully.');
       }
       break;
-    case 'dbclear':
+    case 'msgclear':
       if (args.length < 1) {
-        const query = `DELETE FROM messages; DELETE FROM sqlite_sequence WHERE name='messages';`;
+        const query = `DELETE FROM messages`;
         db.exec(query);
         console.log('Messages table cleared successfully.');
       } else {
@@ -261,6 +287,9 @@ rl.on('line', (line) => {
         db.run(query, [args[0]]);
         console.log(`Messages for group chat ID ${args[0]} cleared successfully.`);
       }
+      break;
+    case 'gcclear':
+      clearAllGroupChats();
       break;
     default:
       console.log(`Unknown command: "${command}". Type "help" for options.`);
