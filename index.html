@@ -90,13 +90,29 @@
       padding: 20px;
     }
 
-    #createGcButton {
-      border: 1px solid #c5c5e9;
-      background: #9b9bb8;
-      color: #2a2a35;
+    #createGcDropdownButton {
+      position: relative;
+      cursor: pointer;
+      border: none;
+      background: #9b9bb800;
+      color: #ababca;
       margin: 8px;
-      border-radius: 10px;
       padding: 5px;
+    }
+    
+    #createGcDropdownButton::after {
+      content: "";
+      position: absolute;
+      right: 30px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 5px solid transparent;
+      border-left-color: #ababca; /* Change arrow color here */
+    }
+
+    #createGcDropdownButton.isToggled::after {
+      border-left-color: transparent;
+      border-top-color: #ababca;
     }
 
     #groupchatId {
@@ -127,6 +143,7 @@
     }
 
     .gc-button {
+      cursor: pointer;
       display: block;
       width: 100%;
       padding: 5px;
@@ -313,6 +330,68 @@
       color: #8e8ea860;
       font-size: 15px;
     }
+    
+    .gc-create-options {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    #createGcIdField {
+      margin: 0px 8px;
+      border: 1px solid #76768d;
+      border-radius: 10px;
+      padding: 5px;
+      background: #606075;
+      color: #ababca;
+    }
+    
+    #createGcIdField::placeholder {
+        color: #808097;
+    }
+    
+    #createGcNameField {
+      margin: 5px 8px;
+      border: 1px solid #76768d;
+      border-radius: 10px;
+      padding: 5px;
+      background: #606075;
+      color: #ababca;
+    }
+    
+    #createGcNameField::placeholder {
+        color: #808097;
+    }
+
+    #createGcIdField::-webkit-outer-spin-button,
+    #createGcIdField::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    #createGcIdField:focus {
+      outline: none;
+    }
+
+    #createGcNameField:focus {
+      outline: none;
+    }
+    
+    #createGcButton {
+      cursor: pointer;
+      border: 1px solid #c5c5e9;
+      background: #9b9bb8;
+      color: #2a2a35;
+      margin: 0px 8px;
+      border-radius: 10px;
+      padding: 5px;
+    }
+    
+    hr {
+        border: none;
+        background: #606075;
+        height: 1px;
+        width: 200px;
+    }
   </style>
 </head>
 
@@ -320,7 +399,13 @@
   <div class="page-container">
     <div class="side-bar">
       <h1 class="title-text">Chat </h1>
-      <button id="createGcButton">Create Group Chat</button>
+      <button id="createGcDropdownButton">Create Group Chat</button>
+      <div id="gcCreateOptions" class="gc-create-options hidden">
+          <input id="createGcIdField" type="number" placeholder="id">
+          <input id="createGcNameField" type="text" placeholder="name">
+          <button id="createGcButton">Create</button>
+      </div>
+      <hr>
       <input id="groupchatId" type="number" name="gc_id" placeholder="Room Code">
       <ul id="savedChats">
       </ul>
@@ -371,6 +456,10 @@
     const mainContent = document.getElementById("main_content");
     const groupchatIdField = document.getElementById("groupchatId");
     const savedChatList = document.getElementById("savedChats");
+    const createGcDropdownButton = document.getElementById("createGcDropdownButton");
+    const gcCreateOptions = document.getElementById("gcCreateOptions");
+    const createGcIdField = document.getElementById("createGcIdField");
+    const createGcNameField = document.getElementById("createGcNameField");
     try {
       const savedName = localStorage.getItem("displayName");
       if (savedName) displayNameField.value = savedName.slice(0, 30);
@@ -485,6 +574,40 @@
       });
     }
 
+    createGcDropdownButton.onclick = function() {
+      if (gcCreateOptions.classList.contains('hidden')) {
+        gcCreateOptions.classList.remove('hidden');
+        createGcDropdownButton.classList.add('isToggled');
+      } else {
+        gcCreateOptions.classList.add('hidden');
+        createGcDropdownButton.classList.remove('isToggled');
+      }
+    }
+
+    createGcButton.onclick = async function() {
+      const gc = JSON.stringify({ id: createGcIdField.value, name: createGcNameField.value });
+      const response = await fetch(`/api/createGC`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: gc
+      });
+      console.log(response);
+
+      if (response.ok) {
+        console.log("Group chat created successfully");
+        getMessages(createGcIdField.value);
+        addGcToStorage(createGcIdField.value, createGcNameField.value);
+        renderNewGcButton(createGcIdField.value, createGcNameField.value);
+        currentGroupChatId = createGcIdField.value;
+        createGcIdField.value = "";
+        createGcNameField.value = "";
+        gcCreateOptions.classList.add('hidden');
+        createGcDropdownButton.classList.remove('isToggled');
+      } else {
+        console.error("Failed to create group chat");
+      }
+    }
+
     function addGcToStorage(groupChatId, groupChatName) {
       const gc = { 
         id: groupChatId,
@@ -503,18 +626,41 @@
       localStorage.setItem("savedGCList", JSON.stringify(savedGCs));
     }
 
+    function removeGcFromStorage(groupChatId) {
+      let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
+      if (savedGCs) {
+        const index = savedGCs.findIndex(item => item.id == groupChatId);
+        if (index !== -1) {
+          savedGCs.splice(index, 1);
+          localStorage.setItem("savedGCList", JSON.stringify(savedGCs));
+        }
+      }
+    }
+
     function renderNewGcButton(groupChatId, groupChatName) {
       const existingGcButton = document.getElementById(String(groupChatId));
       if (existingGcButton) existingGcButton.remove();
       const gcButton = document.createElement("li");
-      gcButton.onclick = function() {
+      gcButton.onclick = async function() {
+        const gcInfo = await getGCInfo(groupChatId);
+
+        getMessages(groupChatId); //getmessages will update the error text so it should be called before checking for errors and returning
+        if (gcInfo.error) {
+          gcButton.remove();
+          removeGcFromStorage(groupChatId);
+          return;
+        }
         currentGroupChatId = groupChatId;
-        getMessages(groupChatId);
       }
       gcButton.textContent = groupChatName;
       gcButton.className = "gc-button";
       gcButton.id = String(groupChatId);
       savedChatList.prepend(gcButton);
+    }
+
+    function clearAllGCs() {
+      localStorage.removeItem("savedGCList");
+      savedChatList.innerHTML = "";
     }
 
     function renderAllSavedGCs() {
@@ -689,6 +835,10 @@
           body: JSON.stringify(payload)
         });*/
         const groupchatInfo = await getGCInfo(currentGroupChatId);
+        if (groupchatInfo.error || !currentGroupChatId || !groupchatInfo.name) {
+          console.log("error");
+          return;
+        }
         addGcToStorage(currentGroupChatId, groupchatInfo.name);
         renderNewGcButton(currentGroupChatId, groupchatInfo.name);
         sendWSMessage(JSON.stringify(payload));
