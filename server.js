@@ -130,6 +130,21 @@ app.get('/api/getMessages', async (req, res) => {
     res.json(messages);
 });
 
+app.get('/api/getGCInfo', async (req, res) => {
+    const { groupChatId } = req.query;
+
+    if (!groupChatId) {
+        return res.status(400).json({ error: 'Missing group chat ID' });
+    }
+
+    if (!(await validateGCID(groupChatId))) {
+        return res.status(400).json({ error: 'Invalid group chat ID' });
+    }
+
+    const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [parseInt(groupChatId)]);
+    res.json(groupChat);
+});
+
 wss.on('connection', (ws) => {
   console.log('New client connected!');
 
