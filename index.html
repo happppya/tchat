@@ -4,9 +4,34 @@
 <head>
   <base target="_top">
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400..900&display=swap');
+
     body {
       font-family: Inter, Arial, sans-serif;
-      color: #225522;
+      background: #1e1e24
+    }
+
+    .page-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .main-content {
+      flex: 1;
+      padding: 0px 0px 0px 10px;
+    }
+
+    ::selection {
+      background-color: #8d8dca;
+      color: #ffffff;
+    }
+
+    .title-text {
+      color: #e3e3ff;
+      padding: 0px 20px;
+      font-size: 30px;
+      font-family: 'Rubik', sans-serif;
+      font-weight: 300;
     }
 
     #message {
@@ -16,13 +41,13 @@
       max-height: 200px;
       box-sizing: border-box;
       padding: 11px 14px 9px 14px;
-      border: 1px solid #d1d5db;
-      border-radius: 20px;
+      border: 1px solid #6c6c80;
+      border-radius: 10px;
       font-family: Inter, Arial, sans-serif;
       font-size: 14px;
       line-height: 1.2;
-      background: #ffffff;
-      color: #222222;
+      background: #393946;
+      color: #8e8ea8;
       resize: none;
       overflow-y: auto;
       outline: none;
@@ -30,12 +55,12 @@
     }
 
     #message:focus {
-      border-color: #4285f4;
-      box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.15);
+      border-color: #8080d6;
+      box-shadow: 0 0 0 3px rgba(121, 121, 184, 0.15);
     }
 
     #message::placeholder {
-      color: #9ca3af;
+      color: #8e8ea8;
     }
 
     .top-bar {
@@ -44,22 +69,96 @@
       margin-bottom: 8px;
     }
 
+    .side-bar {
+      display: flex;
+      flex-direction: column;
+      width: 250px;
+      background: #393946;
+      border: 1px solid #6c6c80;
+      border-radius: 10px;
+    }
+
+    .side-bar ul {
+      list-style: none;
+      padding: 20px;
+    }
+
+    #createGcButton {
+      border: 1px solid #c5c5e9;
+      background: #9b9bb8;
+      color: #2a2a35;
+      margin: 8px;
+      border-radius: 10px;
+      padding: 5px;
+    }
+
+    #groupchatId {
+      margin: 0px 8px;
+      border: 1px solid #76768d;
+      border-radius: 10px;
+      padding: 5px;
+      background: #606075;
+      color: #ababca;
+    }
+
+    #groupchatId::placeholder {
+      color: #808097;
+    }
+
+    #groupchatId.error::placeholder {
+      color: red;
+    }
+
+    #groupchatId::-webkit-outer-spin-button,
+    #groupchatId::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    #groupchatId:focus {
+      outline: none;
+    }
+
+    .gc-button {
+      display: block;
+      width: 100%;
+      padding: 5px;
+      margin: 4px 0;
+      border: none;
+      background: #393946;
+      border-radius: 10px;
+      color: #8e8ea8;
+      text-align: left;
+      font-family: Inter, Arial, sans-serif;
+      font-size: 15px;
+    }
+
+    .gc-button:hover {
+      background: #595965;
+    }
+
     #displayName {
       width: 100px;
       height: 28px;
       box-sizing: border-box;
+      color: #8e8ea8;
       padding: 5px 9px;
       justify-content: flex-end;
-      border: 1px solid #d9dce1;
-      border-radius: 8px;
+      border: 1px solid #6c6c80;
+      border-radius: 10px;
+      background: #393946;
       font-family: Inter, Arial, sans-serif;
       font-size: 12px;
       outline: none;
     }
 
     #displayName:focus {
-      border-color: #4285f4;
-      box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.12);
+      border-color: #8080d6;
+      box-shadow: 0 0 0 2px rgba(121, 121, 184, 0.15);
+    }
+
+    #displayName::placeholder {
+      color: #8e8ea8;
     }
 
     #errorMessage {
@@ -70,7 +169,7 @@
     }
 
     .button-container {
-      padding: 10px;
+      padding: 10px 0px;
       display: flex;
       gap: 10px;
       justify-content: center;
@@ -80,7 +179,9 @@
       width: 100%;
       height: 30px;
       box-sizing: border-box;
-      border: 1px solid #d1d5db;
+      border: 1px solid #6c6c80;
+      background: #393946;
+      color: #8e8ea8;
       border-radius: 10px;
       font-family: Inter, Arial, sans-serif;
       font-size: 12px;
@@ -172,9 +273,10 @@
     }
 
     .message-item {
-      background: #f3f4f6;
-      border: 1px solid #e5e7eb;
+      background: #393946;
+      border: 1px solid #6c6c80;
       border-radius: 8px;
+      color: #8e8ea8;
       padding: 8px 10px;
       font-size: 14px;
       line-height: 1.4;
@@ -182,295 +284,371 @@
 
     .message-time {
       font-size: 11px;
-      color: #787d88;
+      color: #6c6c80;
       margin-left: 8px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .placeholder-text {
+      flex: 1;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      text-align: center;
+      align-items: center;
+      flex-direction: column;
+      height: 100%;
+      color: #8e8ea860;
+      font-size: 15px;
     }
   </style>
 </head>
 
 <body>
-  <h1>Chat </h3>
-    <div class="top-bar">
-      <span id="errorMessage"></span>
-      <input id="displayName" type="text" placeholder="Display Name" maxlength="30">
+  <div class="page-container">
+    <div class="side-bar">
+      <h1 class="title-text">Chat </h1>
+      <button id="createGcButton">Create Group Chat</button>
+      <input id="groupchatId" type="number" name="gc_id" placeholder="Room Code">
+      <ul>
+        <li><button class="gc-button">Lorem Ipsum Gc</button></li>
+        <li><button class="gc-button">Placeholder Gc</button></li>
+      </ul>
     </div>
-    <div class="composer">
-      <div class="message-row">
-        <textarea id="message" placeholder="Message..."></textarea>
-      </div>
-      <div class="button-container">
-        <button class="btn">Upload files</button>
-        <button class="btn" id="gifButton">Browse GIFs</button>
-      </div>
-      <div class="gif-picker" id="gifPicker">
-        <input id="gifSearch" type="text" placeholder="Search GIFs...">
-        <div id="gifResults"></div>
-      </div>
-      <div class="selected-gif-preview" id="selectedGifPreview"></div>
+    <div id="placeholder_text" class="placeholder-text">
+      <h1>Select a Group Chat to start messaging...</h1>
+      <h3>(for now use room code 1234)</h3>
     </div>
-    <div class="messaging-window" id="messagingWindow">
-
+    <div id="main_content" class="main-content hidden">
+      <div class="top-bar">
+        <span id="errorMessage"></span>
+        <input id="displayName" type="text" placeholder="Display Name" maxlength="30">
+      </div>
+      <div class="composer">
+        <div class="message-row">
+          <textarea id="message" placeholder="Message..."></textarea>
+        </div>
+        <div class="button-container">
+          <button class="btn">Upload files</button>
+          <button class="btn" id="gifButton">Browse GIFs</button>
+        </div>
+        <div class="gif-picker" id="gifPicker">
+          <input id="gifSearch" type="text" placeholder="Search GIFs...">
+          <div id="gifResults"></div>
+        </div>
+        <div class="selected-gif-preview" id="selectedGifPreview"></div>
+      </div>
+      <div class="messaging-window" id="messagingWindow">
+      </div>
     </div>
-    <script>
-      function hasNonAscii(str) {
-        const regex = /[^\x00-\x7F]/;
-        return regex.test(str);
-      }
-      let GIPHY_KEY = "";
-      /*function updateGiphyKey(returnedValue) {
-        GIPHY_KEY = returnedValue;
-        console.log(returnedValue);
-      }
-      google.script.run.withSuccessHandler(updateGiphyKey).withFailureHandler(() => {console.error("It's the giphy api key that is the problem");}).retrieveGiphyAPIKey();*/
-      const gifButton = document.getElementById("gifButton");
-      const gifPicker = document.getElementById("gifPicker");
-      const gifSearch = document.getElementById("gifSearch");
-      const gifResults = document.getElementById("gifResults");
-      const selectedGifPreview = document.getElementById("selectedGifPreview");
-      const box = document.getElementById("message");
-      const displayNameField = document.getElementById("displayName");
-      const errorDisplayText = document.getElementById("errorMessage");
-      try {
-        const savedName = localStorage.getItem("displayName");
-        if (savedName) displayNameField.value = savedName.slice(0, 30);
-      } catch (e) {
-        console.error(e);
-      }
+  </div>
+  <script>
+    function hasNonAscii(str) {
+      const regex = /[^\x00-\x7F]/;
+      return regex.test(str);
+    }
+    let currentGroupChatId = null;
+    const gifButton = document.getElementById("gifButton");
+    const gifPicker = document.getElementById("gifPicker");
+    const gifSearch = document.getElementById("gifSearch");
+    const gifResults = document.getElementById("gifResults");
+    const selectedGifPreview = document.getElementById("selectedGifPreview");
+    const box = document.getElementById("message");
+    const displayNameField = document.getElementById("displayName");
+    const errorDisplayText = document.getElementById("errorMessage");
+    const placeholderText = document.getElementById("placeholder_text");
+    const mainContent = document.getElementById("main_content");
+    const groupchatIdField = document.getElementById("groupchatId");
+    try {
+      const savedName = localStorage.getItem("displayName");
+      if (savedName) displayNameField.value = savedName.slice(0, 30);
+    } catch (e) {
+      console.error(e);
+    }
 
-      if (Notification.permission !== "granted" && Notification.permission !== "denied") {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") {
-            console.log("Notification permission accepted.");
-          }
-        });
-      }
-
-      const messagingWindow = document.getElementById("messagingWindow");
-
-      function formatTimestamp(timestampStr) {
-        if (!timestampStr) return "";
-
-        // If timestamp comes back as a number (e.g. Unix epoch in ms)
-        const date = new Date(timestampStr);
-
-        // Check if date is invalid
-        if (isNaN(date.getTime())) {
-          console.warn("Invalid timestamp string received:", timestampStr);
-          return "";
-        }
-
-        return date.toLocaleString([], {
-          month: '2-digit',
-          day: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      }
-
-      const socket = new WebSocket('ws://localhost:8080');
-
-      socket.addEventListener('message', (event) => {
-        console.log("Message received: ", event.data);
-        const incomingMessage = JSON.parse(event.data);
-
-        if (incomingMessage.type == 'message') {
-          const msgText = incomingMessage.messageText;
-          renderSingularNewMessage(incomingMessage);
-          errorMessage.innerHTML = "";
-
-          if (document.hidden) {
-            if (Notification.permission == "granted") {
-              const notificationOptions = {
-                body: (msgText == msgText.slice(0, 40) ? msgText : msgText.slice(0, 40) + "..."),
-                tag: "chat-message",
-                silent: false
-              };
-
-              const notification = new Notification(incomingMessage.displayNameText, notificationOptions);
-
-              notification.onClick() = function (event) {
-                event.preventDefault();
-                window.focus();
-                notification.close();
-              }
-            }
-          }
-        } else {
-          console.error(incomingMessage.messageText);
-          errorDisplayText.innerHTML = incomingMessage.messageText;
+    if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+      Notification.requestPermission().then(permission => {
+        if (permission === "granted") {
+          console.log("Notification permission accepted.");
         }
       });
+    }
 
-      function sendWSMessage(data) {
-        socket.send(data);
+    const messagingWindow = document.getElementById("messagingWindow");
+
+    function formatTimestamp(timestampStr) {
+      if (!timestampStr) return "";
+
+      // If timestamp comes back as a number (e.g. Unix epoch in ms)
+      const date = new Date(timestampStr);
+
+      // Check if date is invalid
+      if (isNaN(date.getTime())) {
+        console.warn("Invalid timestamp string received:", timestampStr);
+        return "";
       }
 
-      function renderMessages(messages) {
-        messagingWindow.innerHTML = "";
+      return date.toLocaleString([], {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
 
-        messages.forEach((msg) => {
-          const msgBox = document.createElement("div");
-          msgBox.className = "message-item";
+    const socketProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${socketProtocol}//${location.host}/ws`);
+    socket.addEventListener('open', () => {
+      console.log('Connected to WebSocket server');
 
-          const name = document.createElement("strong");
-          name.textContent = (msg.display_name || "Unknown") + ": ";
+      pingInterval = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000); // Send ping every 30 seconds
+    });
 
-          const text = document.createElement("span");
-          text.textContent = msg.message_text || "";
+    socket.addEventListener('message', (event) => {
+      console.log("Message received: ", event.data);
+      const incomingMessage = JSON.parse(event.data);
 
-          const time = document.createElement("span");
-          time.className = "message-time";
-          const timestamp = msg.sent_at;
-          console.log(msg);
-          time.textContent = timestamp ? " (" + formatTimestamp(timestamp) + ")" : "";
+      if (incomingMessage.type == 'message') {
+        const msgText = incomingMessage.messageText;
+        renderSingularNewMessage(incomingMessage);
+        errorMessage.innerHTML = "";
 
-          msgBox.appendChild(name);
-          msgBox.appendChild(text);
-          msgBox.appendChild(time);
-          messagingWindow.appendChild(msgBox);
-        });
+        if (document.hidden) {
+          if (Notification.permission == "granted") {
+            const notificationOptions = {
+              body: (msgText == msgText.slice(0, 40) ? msgText : msgText.slice(0, 40) + "..."),
+              tag: incomingMessage.displayNameText,
+              silent: false
+            };
+            console.log("tried notification");
+
+            let notification = new Notification(incomingMessage.displayNameText, notificationOptions);
+
+            notification.onclick = function (event) {
+              event.preventDefault();
+              window.focus();
+              notification.close();
+              console.log("notification closed");
+            }
+          }
+        }
+      } else if (incomingMessage.type !== 'pong') {
+        console.error(incomingMessage.messageText);
+        errorDisplayText.innerHTML = incomingMessage.messageText;
       }
+    });
 
-      function renderSingularNewMessage(msg) {
+    function sendWSMessage(data) {
+      socket.send(data);
+    }
+
+    function renderMessages(messages) {
+      messagingWindow.innerHTML = "";
+
+      messages.forEach((msg) => {
         const msgBox = document.createElement("div");
         msgBox.className = "message-item";
 
         const name = document.createElement("strong");
-        name.textContent = (msg.displayNameText || "Unknown") + ": ";
+        name.textContent = (msg.display_name || "Unknown") + ": ";
 
         const text = document.createElement("span");
-        text.textContent = msg.messageText || "";
+        text.textContent = msg.message_text || "";
 
         const time = document.createElement("span");
         time.className = "message-time";
-        const timestamp = msg.timestamp;
+        const timestamp = msg.sent_at;
         console.log(msg);
         time.textContent = timestamp ? " (" + formatTimestamp(timestamp) + ")" : "";
 
         msgBox.appendChild(name);
         msgBox.appendChild(text);
         msgBox.appendChild(time);
-        messagingWindow.prepend(msgBox);
+        messagingWindow.appendChild(msgBox);
+      });
+    }
+
+    function renderSingularNewMessage(msg) {
+      const msgBox = document.createElement("div");
+      msgBox.className = "message-item";
+
+      const name = document.createElement("strong");
+      name.textContent = (msg.displayNameText || "Unknown") + ": ";
+
+      const text = document.createElement("span");
+      text.textContent = msg.messageText || "";
+
+      const time = document.createElement("span");
+      time.className = "message-time";
+      const timestamp = msg.timestamp;
+      console.log(msg);
+      time.textContent = timestamp ? " (" + formatTimestamp(timestamp) + ")" : "";
+
+      msgBox.appendChild(name);
+      msgBox.appendChild(text);
+      msgBox.appendChild(time);
+      messagingWindow.prepend(msgBox);
+    }
+    
+    function togglePlaceholder(placeholderEnable = true) {
+      if (!placeholderEnable) {
+        placeholderText.classList.add("hidden");
+        mainContent.classList.remove("hidden");
+      } else {
+        placeholderText.classList.remove("hidden");
+        mainContent.classList.add("hidden");
       }
+    }
 
-      async function getMessages() {
-        try {
-          const response = await fetch('/api/getMessages?numMessages=20');
+    async function getMessages(groupChatId, numMessages = 20) {
+      try {
+        const response = await fetch(`/api/getMessages?groupChatId=${Number(groupChatId)}&numMessages=${numMessages}`);
 
-          if (!response.ok) {
-            throw new Error('Failed to fetch messages');
-          }
+        const data = await response.json();
+        if (!response.ok) {
+          togglePlaceholder(true);
+          groupchatIdField.value = "";
+          groupchatIdField.placeholder = "Invalid Room!";
+          groupchatIdField.classList.add("error");
+          setTimeout(() => {
+            groupchatIdField.placeholder = "Room Code";
+            groupchatIdField.classList.remove("error");
+          }, 667);
 
-          const messages = await response.json();
-          console.log(messages);
-
-          renderMessages(messages);
-          return messages;
-        } catch (error) {
-          console.error(error);
+          throw new Error('Failed to fetch messages');
         }
+
+        togglePlaceholder(false);
+
+        const messages = data;
+        console.log(messages);
+
+        renderMessages(messages);
+        return messages;
+      } catch (error) {
+        console.error(error);
       }
-      getMessages();
+    }
 
-      displayNameField.addEventListener("input", (event) => {
-        event.target.value = event.target.value.replace(/[^\x00-\x7F]/g, '');
-        try {
-          localStorage.setItem("displayName", displayNameField.value.slice(0, 30));
-        } catch (e) {
-          console.error(e);
-        }
-      });
+    displayNameField.addEventListener("input", (event) => {
+      event.target.value = event.target.value.replace(/[^\x00-\x7F]/g, '');
+      try {
+        localStorage.setItem("displayName", displayNameField.value.slice(0, 30));
+      } catch (e) {
+        console.error(e);
+      }
+    });
 
-      let selectedGif = null;
-      gifButton.addEventListener("click", () => {
-        gifPicker.classList.toggle("open");
-        if (gifPicker.classList.contains("open")) {
-          gifSearch.focus();
-          searchGifs("trending");
-        }
-      });
-      gifSearch.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          searchGifs(gifSearch.value.trim());
-        }
-      });
-      async function searchGifs(query) {
-        if (!GIPHY_KEY) return;
-        if (!query) {
-          query = "trending";
-        }
-        try {
-          const response = await fetch("https://api.giphy.com/v1/gifs/search" + "?api_key=" + encodeURIComponent(GIPHY_KEY) + "&q=" + encodeURIComponent(query) + "&limit=24" + "&rating=r");
-          const data = await response.json();
-          gifResults.innerHTML = "";
-          for (const gif of data.data) {
-            const img = document.createElement("img");
-            img.src = gif.images.fixed_width_small.url;
-            img.alt = gif.title || "GIF";
-            img.className = "gif-result";
-            img.addEventListener("click", () => {
-              selectedGif = {
-                id: gif.id,
-                url: gif.images.original.url
-              };
+    let selectedGif = null;
+    gifButton.addEventListener("click", () => {
+      gifPicker.classList.toggle("open");
+      if (gifPicker.classList.contains("open")) {
+        gifSearch.focus();
+        searchGifs("trending");
+      }
+    });
+    gifSearch.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchGifs(gifSearch.value.trim());
+      }
+    });
+    async function searchGifs(query) {
+      if (!GIPHY_KEY) return;
+      if (!query) {
+        query = "trending";
+      }
+      try {
+        const response = await fetch("https://api.giphy.com/v1/gifs/search" + "?api_key=" + encodeURIComponent(GIPHY_KEY) + "&q=" + encodeURIComponent(query) + "&limit=24" + "&rating=r");
+        const data = await response.json();
+        gifResults.innerHTML = "";
+        for (const gif of data.data) {
+          const img = document.createElement("img");
+          img.src = gif.images.fixed_width_small.url;
+          img.alt = gif.title || "GIF";
+          img.className = "gif-result";
+          img.addEventListener("click", () => {
+            selectedGif = {
+              id: gif.id,
+              url: gif.images.original.url
+            };
+            selectedGifPreview.innerHTML = "";
+            const previewButton = document.createElement("button");
+            previewButton.className = "gif-preview-button";
+            previewButton.addEventListener('click', function () {
+              selectedGif = null;
               selectedGifPreview.innerHTML = "";
-              const previewButton = document.createElement("button");
-              previewButton.className = "gif-preview-button";
-              previewButton.addEventListener('click', function () {
-                selectedGif = null;
-                selectedGifPreview.innerHTML = "";
-              });
-              const preview = document.createElement("img");
-              preview.src = gif.images.fixed_width_small.url;
-              preview.alt = gif.title || "GIF";
-              preview.className = "gif-preview";
-
-              previewButton.appendChild(preview);
-              selectedGifPreview.appendChild(previewButton);
-              gifPicker.classList.remove("open");
-              console.log("Selected GIF:", selectedGif);
             });
-            gifResults.appendChild(img);
-          }
-        } catch (error) {
-          console.error("GIPHY error:", error);
+            const preview = document.createElement("img");
+            preview.src = gif.images.fixed_width_small.url;
+            preview.alt = gif.title || "GIF";
+            preview.className = "gif-preview";
+
+            previewButton.appendChild(preview);
+            selectedGifPreview.appendChild(previewButton);
+            gifPicker.classList.remove("open");
+            console.log("Selected GIF:", selectedGif);
+          });
+          gifResults.appendChild(img);
         }
+      } catch (error) {
+        console.error("GIPHY error:", error);
       }
+    }
 
-      box.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          const message = box.value.trim();
-          if (message === "" && !selectedGif) {
-            return;
-          }
-          box.value = "";
-          const displayName = displayNameField.value.trim();
-          //google.script.run.sendMessage(message, displayNameField.value.trim(), selectedGif);
-          const payload = {
-            messageText: message,
-            displayNameText: displayName
-          };
-
-          /*fetch('/api/sendMessage', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-          });*/
-          sendWSMessage(JSON.stringify(payload));
-          selectedGif = null;
-          selectedGifPreview.innerHTML = "";
+    box.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        const message = box.value.trim();
+        if (message === "" && !selectedGif) {
+          return;
         }
-      });
-      box.addEventListener("input", function () {
-        this.style.height = "40px";
-        this.style.height = (this.scrollHeight + 2 > 40 ? this.scrollHeight + 2 : 40) + "px";
-      });
-    </script>
+        box.value = "";
+        const displayName = displayNameField.value.trim();
+        //google.script.run.sendMessage(message, displayNameField.value.trim(), selectedGif);
+        const payload = {
+          type: 'message',
+          groupChatId: currentGroupChatId,
+          messageText: message,
+          displayNameText: displayName
+        };
+
+        /*fetch('/api/sendMessage', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });*/
+        sendWSMessage(JSON.stringify(payload));
+        selectedGif = null;
+        selectedGifPreview.innerHTML = "";
+      }
+    });
+    box.addEventListener("input", function () {
+      this.style.height = "40px";
+      this.style.height = (this.scrollHeight + 2 > 40 ? this.scrollHeight + 2 : 40) + "px";
+    });
+    groupchatIdField.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const groupChatId = groupchatIdField.value.trim();
+        if (groupChatId === "") {
+          return;
+        }
+        currentGroupChatId = groupChatId;
+        getMessages(groupChatId);
+      }
+    });
+  </script>
 </body>
 
 </html>
