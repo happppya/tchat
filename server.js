@@ -109,14 +109,22 @@ async function createGroupChat(gc_id, gc_name) {
 }
 
 async function destroyGroupChat(gc_id) {
-    const query = `DELETE FROM group_chats WHERE id = ?; DELETE FROM messages WHERE group_chat_id = ?`;
-    await db.run(query, [gc_id, gc_id]);
-    console.log("gc destroyed");
+  await db.run(
+    'DELETE FROM messages WHERE group_chat_id = ?',
+    [gc_id]
+  );
+
+  await db.run(
+    'DELETE FROM group_chats WHERE id = ?',
+    [gc_id]
+  );
+
+  console.log('gc destroyed');
 }
 
 async function clearAllGroupChats() {
-    const query = `DELETE FROM group_chats; DELETE FROM messages`;
-    await db.run(query);
+  await db.run(`DELETE FROM group_chats`);
+  await db.run(`DELETE FROM messages`);
     console.log("all gcs destroyed");
 }
 
