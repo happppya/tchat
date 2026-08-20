@@ -91,27 +91,29 @@
     }
 
     #createGcDropdownButton {
-      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
       cursor: pointer;
       border: none;
       background: #9b9bb800;
       color: #ababca;
-      margin: 8px;
-      padding: 5px;
+      padding: 8px;
     }
-    
+
     #createGcDropdownButton::after {
+      display: inline-flex;
       content: "";
-      position: absolute;
-      right: 30px;
-      top: 50%;
-      transform: translateY(-50%);
+      transform: translateY(-7%) translateX(35%);
       border: 5px solid transparent;
-      border-left-color: #ababca; /* Change arrow color here */
+      border-left-color: #ababca;
+      /* Change arrow color here */
     }
 
     #createGcDropdownButton.isToggled::after {
       border-left-color: transparent;
+      transform: translateY(20%) translateX(20%);
       border-top-color: #ababca;
     }
 
@@ -330,12 +332,12 @@
       color: #8e8ea860;
       font-size: 15px;
     }
-    
+
     .gc-create-options {
-        display: flex;
-        flex-direction: column;
+      display: flex;
+      flex-direction: column;
     }
-    
+
     #createGcIdField {
       margin: 0px 8px;
       border: 1px solid #76768d;
@@ -344,11 +346,11 @@
       background: #606075;
       color: #ababca;
     }
-    
+
     #createGcIdField::placeholder {
-        color: #808097;
+      color: #808097;
     }
-    
+
     #createGcNameField {
       margin: 5px 8px;
       border: 1px solid #76768d;
@@ -357,9 +359,9 @@
       background: #606075;
       color: #ababca;
     }
-    
+
     #createGcNameField::placeholder {
-        color: #808097;
+      color: #808097;
     }
 
     #createGcIdField::-webkit-outer-spin-button,
@@ -375,7 +377,7 @@
     #createGcNameField:focus {
       outline: none;
     }
-    
+
     #createGcButton {
       cursor: pointer;
       border: 1px solid #c5c5e9;
@@ -385,14 +387,15 @@
       border-radius: 10px;
       padding: 5px;
     }
-    
+
     hr {
-        border: none;
-        background: #606075;
-        height: 1px;
-        width: 200px;
+      border: none;
+      background: #606075;
+      height: 1px;
+      width: 200px;
     }
   </style>
+  <title>Chat</title>
 </head>
 
 <body>
@@ -401,9 +404,9 @@
       <h1 class="title-text">Chat </h1>
       <button id="createGcDropdownButton">Create Group Chat</button>
       <div id="gcCreateOptions" class="gc-create-options hidden">
-          <input id="createGcIdField" type="number" placeholder="id">
-          <input id="createGcNameField" type="text" placeholder="name">
-          <button id="createGcButton">Create</button>
+        <input id="createGcIdField" type="number" placeholder="id">
+        <input id="createGcNameField" type="text" placeholder="name">
+        <button id="createGcButton">Create</button>
       </div>
       <hr>
       <input id="groupchatId" type="number" name="gc_id" placeholder="Room Code">
@@ -416,7 +419,7 @@
     </div>
     <div id="main_content" class="main-content hidden">
       <div class="top-bar">
-        <h1 id="groupchatTitle" class="groupchat-title-bar">Lorem Ipsum</h1>
+        <h1 id="groupchatTitle" class="groupchat-title-bar">Group Chat</h1>
         <span id="errorMessage"></span>
         <input id="displayName" type="text" placeholder="Display Name" maxlength="30">
       </div>
@@ -510,25 +513,26 @@
       }, 30000); // Send ping every 30 seconds
     });
 
-    socket.addEventListener('message', (event) => {
+    socket.addEventListener('message', async (event) => {
       console.log("Message received: ", event.data);
       const incomingMessage = JSON.parse(event.data);
 
-      if (incomingMessage.type == 'message') {
+      if (incomingMessage.type == 'message' && getGcList().some(gc => gc.id == incomingMessage.groupChatId)) {
         const msgText = incomingMessage.messageText;
-        renderSingularNewMessage(incomingMessage);
+        if (incomingMessage.groupChatId == currentGroupChatId) renderSingularNewMessage(incomingMessage);
         errorMessage.innerHTML = "";
+        const gcInfo = await getGCInfo(incomingMessage.groupChatId);
 
         if (document.hidden) {
           if (Notification.permission == "granted") {
             const notificationOptions = {
               body: (msgText == msgText.slice(0, 40) ? msgText : msgText.slice(0, 40) + "..."),
-              tag: incomingMessage.displayNameText,
+              tag: incomingMessage.timestamp,
               silent: false
             };
             console.log("tried notification");
 
-            let notification = new Notification(incomingMessage.displayNameText + `(${incomingMessage.groupChatId})`, notificationOptions);
+            let notification = new Notification(incomingMessage.displayNameText + ` (${gcInfo.name})`, notificationOptions);
 
             notification.onclick = function (event) {
               event.preventDefault();
@@ -538,9 +542,11 @@
             }
           }
         }
-      } else if (incomingMessage.type !== 'pong') {
+      } else if (incomingMessage.type == "error") {
         console.error(incomingMessage.messageText);
         errorDisplayText.innerHTML = incomingMessage.messageText;
+      } else {
+        console.log("huh");
       }
     });
 
@@ -564,17 +570,20 @@
         const time = document.createElement("span");
         time.className = "message-time";
         const timestamp = msg.sent_at;
-        console.log(msg);
         time.textContent = timestamp ? " (" + formatTimestamp(timestamp) + ")" : "";
 
         msgBox.appendChild(name);
         msgBox.appendChild(text);
         msgBox.appendChild(time);
+        const gifEl = createGifElement(msg.gif_url);
+        if (gifEl) {
+          msgBox.appendChild(gifEl);
+        }
         messagingWindow.appendChild(msgBox);
       });
     }
 
-    createGcDropdownButton.onclick = function() {
+    createGcDropdownButton.onclick = function () {
       if (gcCreateOptions.classList.contains('hidden')) {
         gcCreateOptions.classList.remove('hidden');
         createGcDropdownButton.classList.add('isToggled');
@@ -584,14 +593,13 @@
       }
     }
 
-    createGcButton.onclick = async function() {
+    createGcButton.onclick = async function () {
       const gc = JSON.stringify({ id: createGcIdField.value, name: createGcNameField.value });
       const response = await fetch(`/api/createGC`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: gc
       });
-      console.log(response);
 
       if (response.ok) {
         console.log("Group chat created successfully");
@@ -608,8 +616,13 @@
       }
     }
 
+    function getGcList() {
+      let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
+      return savedGCs;
+    }
+
     function addGcToStorage(groupChatId, groupChatName) {
-      const gc = { 
+      const gc = {
         id: groupChatId,
         name: groupChatName
       };
@@ -641,15 +654,16 @@
       const existingGcButton = document.getElementById(String(groupChatId));
       if (existingGcButton) existingGcButton.remove();
       const gcButton = document.createElement("li");
-      gcButton.onclick = async function() {
+      gcButton.onclick = async function () {
         const gcInfo = await getGCInfo(groupChatId);
 
-        getMessages(groupChatId); //getmessages will update the error text so it should be called before checking for errors and returning
         if (gcInfo.error) {
+          showError("Invalid Room!");
           gcButton.remove();
           removeGcFromStorage(groupChatId);
           return;
         }
+        getMessages(groupChatId);
         currentGroupChatId = groupChatId;
       }
       gcButton.textContent = groupChatName;
@@ -665,13 +679,24 @@
 
     function renderAllSavedGCs() {
       let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
-      if(savedGCs) {
+      if (savedGCs) {
         savedGCs.forEach((gc) => {
           renderNewGcButton(gc.id, gc.name);
         });
       }
     }
     renderAllSavedGCs();
+
+    function createGifElement(gifUrl) {
+      if (!gifUrl) return null;
+      const img = document.createElement("img");
+      img.src = gifUrl;
+      img.style.maxWidth = "200px";
+      img.style.display = "block";
+      img.style.marginTop = "6px";
+      img.style.borderRadius = "8px";
+      return img;
+    }
 
     function renderSingularNewMessage(msg) {
       const msgBox = document.createElement("div");
@@ -686,15 +711,17 @@
       const time = document.createElement("span");
       time.className = "message-time";
       const timestamp = msg.timestamp;
-      console.log(msg);
+
       time.textContent = timestamp ? " (" + formatTimestamp(timestamp) + ")" : "";
 
       msgBox.appendChild(name);
       msgBox.appendChild(text);
       msgBox.appendChild(time);
+      const gifEl = createGifElement(msg.gifUrl);
+      if (gifEl) msgBox.appendChild(gifEl);
       messagingWindow.prepend(msgBox);
     }
-    
+
     function togglePlaceholder(placeholderEnable = true) {
       if (!placeholderEnable) {
         placeholderText.classList.add("hidden");
@@ -711,20 +738,24 @@
       return groupchatInfo;
     }
 
+    async function showError(errorMessage) {
+      togglePlaceholder(true);
+      groupchatIdField.value = "";
+      groupchatIdField.placeholder = errorMessage;
+      groupchatIdField.classList.add("error");
+      setTimeout(() => {
+        groupchatIdField.placeholder = "Room Code";
+        groupchatIdField.classList.remove("error");
+      }, 667);
+    }
+
     async function getMessages(groupChatId, numMessages = 20) {
       try {
         const response = await fetch(`/api/getMessages?groupChatId=${Number(groupChatId)}&numMessages=${numMessages}`);
 
         const data = await response.json();
         if (!response.ok) {
-          togglePlaceholder(true);
-          groupchatIdField.value = "";
-          groupchatIdField.placeholder = "Invalid Room!";
-          groupchatIdField.classList.add("error");
-          setTimeout(() => {
-            groupchatIdField.placeholder = "Room Code";
-            groupchatIdField.classList.remove("error");
-          }, 667);
+          showError("Invalid Room!");
 
           throw new Error('Failed to fetch messages');
         }
@@ -732,9 +763,9 @@
         togglePlaceholder(false);
 
         const messages = data;
-        console.log(messages);
 
         groupchatInfo = await getGCInfo(groupChatId);
+
 
         renderMessages(messages);
         groupchatTitle.textContent = groupchatInfo.name || "Group Chat";
@@ -767,32 +798,55 @@
         searchGifs(gifSearch.value.trim());
       }
     });
-    async function searchGifs(query) {
-      if (!GIPHY_KEY) return;
-      if (!query) {
-        query = "trending";
+    function appendGifToMessage(container, gifUrl) {
+      if (gifUrl) {
+        const gifImg = document.createElement("img");
+        gifImg.src = gifUrl;
+        gifImg.className = "message-gif";
+        gifImg.style.maxWidth = "200px";
+        gifImg.style.display = "block";
+        gifImg.style.marginTop = "6px";
+        gifImg.style.borderRadius = "6px";
+        container.appendChild(gifImg);
       }
+    }
+
+    async function searchGifs(query) {
+      if (!query) return;
+
       try {
-        const response = await fetch("https://api.giphy.com/v1/gifs/search" + "?api_key=" + encodeURIComponent(GIPHY_KEY) + "&q=" + encodeURIComponent(query) + "&limit=24" + "&rating=r");
+        const response = await fetch(`/api/searchGifs?query=${encodeURIComponent(query)}`);
         const data = await response.json();
         gifResults.innerHTML = "";
-        for (const gif of data.data) {
+        if (!data.data || data.data.length === 0) {
+          gifResults.innerHTML = "<p style='color:#8e8ea8; padding:8px;'>No GIFs found.</p>";
+          return;
+        }
+
+        // Loop through the array of GIFs
+        data.data.forEach((gif) => {
           const img = document.createElement("img");
           img.src = gif.images.fixed_width_small.url;
           img.alt = gif.title || "GIF";
           img.className = "gif-result";
+
+          // Click event to select a GIF
           img.addEventListener("click", () => {
             selectedGif = {
               id: gif.id,
               url: gif.images.original.url
             };
+
+            // Render selected preview
             selectedGifPreview.innerHTML = "";
+
             const previewButton = document.createElement("button");
             previewButton.className = "gif-preview-button";
-            previewButton.addEventListener('click', function () {
+            previewButton.addEventListener("click", () => {
               selectedGif = null;
               selectedGifPreview.innerHTML = "";
             });
+
             const preview = document.createElement("img");
             preview.src = gif.images.fixed_width_small.url;
             preview.alt = gif.title || "GIF";
@@ -800,13 +854,18 @@
 
             previewButton.appendChild(preview);
             selectedGifPreview.appendChild(previewButton);
+
+            // Close the picker dropdown
             gifPicker.classList.remove("open");
-            console.log("Selected GIF:", selectedGif);
+
+            // Focus back on the message box
+            box.focus();
           });
+
           gifResults.appendChild(img);
-        }
+        });
       } catch (error) {
-        console.error("GIPHY error:", error);
+        console.error("Failed to load GIFs:", error);
       }
     }
 
@@ -824,7 +883,8 @@
           type: 'message',
           groupChatId: currentGroupChatId,
           messageText: message,
-          displayNameText: displayName
+          displayNameText: displayName,
+          gifUrl: selectedGif ? selectedGif.url : null // ok giovan i added it
         };
 
         /*fetch('/api/sendMessage', {
