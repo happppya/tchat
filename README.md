@@ -5,10 +5,4 @@ Greetings Gitters and Hubbers! This repository is meant to hold the codes for ou
 PLEASE BE ADVISED<<< some things are omitted for the sake of security and for other reasons. 
 
 #GIFS WONT WORK WITHOUT AN API KEY
-Not included in this code is an .env file containing our api key for gifs. if you want gifs to work, you must add your own .env file with your api key from Giphy. Sorry about this!
-
-String nums = "";
-for (i=0;i<6;i++){
-  nums += i;
-  System.out.println(nums);
-}
+get a giphy api key and inside a folder named .env put in GIPHY_API_KEY="<insert key>"
