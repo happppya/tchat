@@ -5,4 +5,4 @@ Greetings Gitters and Hubbers! This repository is meant to hold the codes for ou
 PLEASE BE ADVISED<<< some things are omitted for the sake of security and for other reasons. 
 
 #GIFS WONT WORK WITHOUT AN API KEY
-get a giphy api key and inside a folder named .env put in GIPHY_API_KEY="<insert key>"
+get a giphy api key and inside a folder named .env put in GIPHY_API_KEY="\<insert key\>"
