@@ -5,7 +5,7 @@ const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 const { WebSocketServer } = require('ws');
 const readline = require('readline');
-
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
@@ -20,7 +20,10 @@ let db;
 app.use(express.json());
 
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
+  const start = performance.now();
+  res.sendFile(__dirname + '/index.html');
+  const end = performance.now();
+  console.log(`Serving index.html took ${end - start} ms`);
 });
 
 app.get('/login', (req, res) => {
@@ -38,13 +41,13 @@ async function initializeAndStore() {
   });
   console.log('Connected to local SQLite file database!');
 
-  // 2. Create a Table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_chat_id INTEGER NOT NULL,
       display_name TEXT,
       message_text TEXT,
+      gif_url TEXT,
       sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -64,22 +67,14 @@ async function initializeAndStore() {
       email TEXT,
       password TEXT
     );
-    `);
+  `);
 
   try {
-    // 3. Insert data using parameterized queries to prevent syntax issues
-    //const query = `INSERT INTO messages (display_name, message_text, sent_at) VALUES (?, ?, ?)`;
-    //await db.run(query, ['Test Name', 'Hello World', '2026-08-13 14:30:00']);
-    
-    //console.log('Data stored successfully in local file!');
-
-    // 4. Read data back to verify it works
     const messages = await db.all('SELECT * FROM messages');
-    console.log('Current messages in file:', messages);
+    //console.log('Current messages in file:', messages);
 
     const groupChats = await db.all('SELECT * FROM group_chats');
-    console.log('Current group chats in file:', groupChats);
-
+    //console.log('Current group chats in file:', groupChats);
   } catch (error) {
     console.error('Error handling database operations:', error.message);
   }
@@ -88,24 +83,21 @@ async function initializeAndStore() {
 initializeAndStore();
 
 function shutdown() {
-    console.log("Closing database...");
-    db.close();
-    process.exit(0);
+  console.log("Closing database...");
+  db.close();
+  process.exit(0);
 }
-process.on('SIGINT', shutdown)
+process.on('SIGINT', shutdown);
 
-async function addMessageToTable(groupChatId, messageText, displayNameText, timestamp) {
-    const query = `INSERT INTO messages (group_chat_id, display_name, message_text, sent_at) VALUES (?, ?, ?, ?)`;
-    db.run(query, [groupChatId, displayNameText, messageText, timestamp]);
-
-    const messages = await db.all('SELECT * FROM messages');
-    console.log('Current messages in file:', messages);
+async function addMessageToTable(groupChatId, messageText, displayNameText, gifUrl, timestamp) {
+  const query = `INSERT INTO messages (group_chat_id, display_name, message_text, gif_url, sent_at) VALUES (?, ?, ?, ?, ?)`;
+  await db.run(query, [groupChatId, displayNameText, messageText, gifUrl, timestamp]);
 }
 
 async function createGroupChat(gc_id, gc_name) {
-    const query = `INSERT INTO group_chats (id, name) VALUES (?, ?)`;
-    await db.run(query, [gc_id, gc_name]);
-    console.log("gc created");
+  const query = `INSERT INTO group_chats (id, name) VALUES (?, ?)`;
+  await db.run(query, [gc_id, gc_name]);
+  console.log(`GC created: ${gc_name} (ID: ${gc_id})`);
 }
 
 async function destroyGroupChat(gc_id) {
@@ -119,56 +111,82 @@ async function destroyGroupChat(gc_id) {
     [gc_id]
   );
 
-  console.log('gc destroyed');
+  console.log(`GC destroyed: (ID: ${gc_id})`);
 }
 
 async function clearAllGroupChats() {
   await db.run(`DELETE FROM group_chats`);
   await db.run(`DELETE FROM messages`);
-    console.log("all gcs destroyed");
+  console.log(`All GCs destroyed`);
 }
 
 async function validateGCID(gc_id) {
-    const query = `SELECT * FROM group_chats WHERE id = ?`;
-    const result = await db.get(query, [gc_id]);
-    return result !== undefined;
+  const query = `SELECT * FROM group_chats WHERE id = ?`;
+  const result = await db.get(query, [gc_id]);
+  return result !== undefined;
 }
 
 app.get('/api/getMessages', async (req, res) => {
-    const { groupChatId, numMessages } = req.query;
-    console.log("get messages get received");
-    if (numMessages > 100) {
-        return res.status(400).json({ error: 'numMessages exceeds 100' });
-    }
-    if (groupChatId && !(await validateGCID(groupChatId))) {
-        return res.status(400).json({ error: 'Invalid group chat ID' });
-    }
-    const messages = await db.all(
-        'SELECT * FROM messages WHERE group_chat_id = ? ORDER BY sent_at DESC LIMIT ?',
-        [parseInt(groupChatId), parseInt(numMessages)]
-    );
-    res.json(messages);
+  const start = performance.now();
+  const { groupChatId, numMessages } = req.query;
+  if (numMessages > 100) {
+    return res.status(400).json({ error: 'numMessages exceeds 100' });
+  }
+  if (groupChatId && !(await validateGCID(groupChatId))) {
+    return res.status(400).json({ error: 'Invalid group chat ID' });
+  }
+  const messages = await db.all(
+    'SELECT * FROM messages WHERE group_chat_id = ? ORDER BY sent_at DESC LIMIT ?',
+    [parseInt(groupChatId), parseInt(numMessages)]
+  );
+  const end = performance.now();
+  console.log(`getMessages took ${end - start} ms`);
+  res.json(messages);
 });
 
 app.get('/api/getGCInfo', async (req, res) => {
-    const { groupChatId } = req.query;
+  const start = performance.now();
+  const { groupChatId } = req.query;
 
-    if (!groupChatId) {
-        return res.status(400).json({ error: 'Missing group chat ID' });
-    }
+  if (!groupChatId) {
+    return res.status(400).json({ error: 'Missing group chat ID' });
+  }
 
-    if (!(await validateGCID(groupChatId))) {
-        return res.status(400).json({ error: 'Invalid group chat ID' });
-    }
+  if (!(await validateGCID(groupChatId))) {
+    return res.status(400).json({ error: 'Invalid group chat ID' });
+  }
 
-    const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [parseInt(groupChatId)]);
-    res.json(groupChat);
+  const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [parseInt(groupChatId)]);
+  const end = performance.now();
+  console.log(`getGCInfo took ${end - start} ms`);
+  res.json(groupChat);
 });
 
 app.post('/api/createGC', async (req, res) => {
   const data = req.body;
   await createGroupChat(data.id, data.name);
   res.status(201).json({ message: 'Group chat created successfully' });
+});
+
+const hidden_inventory_key = process.env.GIPHY_API_KEY;
+
+// Fixed /api/searchGifs route
+app.get('/api/searchGifs', async (req, res) => {
+  const start = performance.now();
+  const { query } = req.query;
+  try {
+    const url = `https://api.giphy.com/v1/gifs/search?api_key=${hidden_inventory_key}&q=${encodeURIComponent(query)}&limit=12&rating=r`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    // Return data back to client
+    res.json(data);
+  } catch (error) {
+    console.error("GIPHY error:", error);
+    res.status(500).json({ error: "Failed to fetch GIFs" });
+  }
+  const end = performance.now();
+  console.log(`searchGifs took ${end - start} ms`);
 });
 
 wss.on('connection', (ws) => {
@@ -182,13 +200,13 @@ wss.on('connection', (ws) => {
 
     let messageJSON = JSON.parse(messageString);
     let returnJSON = {};
-    let { type, groupChatId = 0, messageText = '', displayNameText = '' } = messageJSON;
+    let { type, groupChatId = 0, messageText = '', displayNameText = '', gifUrl = '' } = messageJSON;
     if (type === 'ping') {
       returnJSON.type = 'pong';
       ws.send(JSON.stringify(returnJSON));
       return;
     }
-    if ((!messageText || !displayNameText) && messageJSON.type !== 'ping') {
+    if (((!messageText && !gifUrl) || !displayNameText) && messageJSON.type !== 'ping') {
       returnJSON.type = 'error';
       returnJSON.messageText = 'Either message text or display name is blank';
       ws.send(JSON.stringify(returnJSON));
@@ -212,7 +230,7 @@ wss.on('connection', (ws) => {
     const sqliteTextTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     messageJSON.timestamp = sqliteTextTimestamp;
     messageJSON.type = 'message';
-    addMessageToTable(groupChatId, messageText, displayNameText, sqliteTextTimestamp);
+    await addMessageToTable(groupChatId, messageText, displayNameText, gifUrl, sqliteTextTimestamp);
     wss.clients.forEach((client) => {
       // Check if the connection is open before sending
       if (client.readyState === client.OPEN) {
@@ -241,16 +259,16 @@ server.on('upgrade', (request, socket, head) => { //black magic
 });
 
 server.listen(3000, () => {
-    console.log("Server running on port 3000");
+  console.log("Server running on port 3000");
 });
 
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   const input = line.trim();
   const [command, ...args] = input.split(' ');
 
   switch (command.toLowerCase()) {
     case 'help':
-      console.log('Available commands: status, users, create, stop');
+      console.log('Available commands: status, users, create, destroy, stop, db, dbclear, gcclear');
       break;
     case 'status':
       console.log(`Server status: ONLINE. Connections: ${server.connections ?? 0}`);
@@ -265,7 +283,7 @@ rl.on('line', (line) => {
       } else {
         const [gc_id, ...gc_name_parts] = args;
         const gc_name = gc_name_parts.join(' ');
-        createGroupChat(gc_id, gc_name);
+        await createGroupChat(gc_id, gc_name);
       }
       break;
     case 'destroy':
@@ -281,14 +299,14 @@ rl.on('line', (line) => {
         console.log('Usage: db <query>');
       } else {
         const query = args.join(' ');
-        db.run(query, []);
+        await db.run(query, []);
         console.log('Query executed successfully.');
       }
       break;
     case 'msgclear':
       if (args.length < 1) {
         const query = `DELETE FROM messages`;
-        db.exec(query);
+        await db.exec(query);
         console.log('Messages table cleared successfully.');
       } else {
         const query = `DELETE FROM messages WHERE group_chat_id = ?; DELETE FROM sqlite_sequence WHERE name='messages';`;
@@ -297,7 +315,7 @@ rl.on('line', (line) => {
       }
       break;
     case 'gcclear':
-      clearAllGroupChats();
+      await clearAllGroupChats();
       break;
     default:
       console.log(`Unknown command: "${command}". Type "help" for options.`);
