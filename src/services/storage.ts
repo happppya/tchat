@@ -6,7 +6,7 @@ const STORAGE_KEYS = {
 } as const;
 
 /** Fired on this window whenever the saved-GC list changes. */
-export const GCS_CHANGED_EVENT = "termchat:gcs-changed";
+export const GCS_CHANGED_EVENT = "tchat:gcs-changed";
 
 function notifyGCsChanged() {
   if (typeof window !== "undefined") {

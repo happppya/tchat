@@ -6,12 +6,37 @@ export interface Message {
   message_text: string | null;
   gif_url: string | null;
   sent_at: string;
+  /** Authenticated author id, used to authorize edit/delete. Null for legacy rows. */
+  user_id?: number | null;
+  /** Timestamp of the most recent edit, if any. */
+  edited_at?: string | null;
   /** Denormalized author avatar URL captured when the message was sent. */
   avatar_url?: string | null;
   /** Uploaded attachment (served URL + display metadata), when present. */
   file_url?: string | null;
   file_name?: string | null;
   file_type?: string | null;
+  /** Message being replied to (denormalized at reply time). */
+  reply_to_id?: number | null;
+  reply_quote?: string | null;
+  reply_author?: string | null;
+  /** Emoji reactions attached to this message. */
+  reactions?: Reaction[];
+}
+
+/** Aggregate emoji reaction on a message. */
+export interface Reaction {
+  emoji: string;
+  count: number;
+  /** Whether the current viewer has reacted with this emoji. */
+  me: boolean;
+}
+
+/** A message the user is currently composing a reply to. */
+export interface ReplyTarget {
+  id: number;
+  quote: string;
+  author: string;
 }
 
 /** A group chat */
@@ -20,6 +45,8 @@ export interface GroupChat {
   name: string;
   /** User id of the room's creator, when known. Null for legacy rooms. */
   owner_user_id?: number | null;
+  /** 1 when the room is discoverable in the rooms tab, 0 otherwise. */
+  is_public?: number | null;
 }
 
 /** Saved group chat in local storage */
@@ -30,9 +57,30 @@ export interface SavedGC {
 
 /** Incoming WebSocket message */
 export interface WSMessage {
-  type: "message" | "error" | "pong";
+  type:
+    | "message"
+    | "editMessage"
+    | "deleteMessage"
+    | "messageReactions"
+    | "error"
+    | "pong";
   groupChatId: number;
+  /** Real DB id echoed back on send and on edit/delete events. */
+  id?: number;
+  /** Author user id echoed back on send. */
+  userId?: number;
+  /** Target message id for editMessage/deleteMessage events. */
+  messageId?: number;
+  /** New body for editMessage events. */
   messageText?: string;
+  /** Edit timestamp for editMessage events. */
+  editedAt?: string;
+  /** Reply metadata echoed back on a sent message. */
+  replyToId?: number | null;
+  replyQuote?: string | null;
+  replyAuthor?: string | null;
+  /** Reaction aggregate for messageReactions events. */
+  reactions?: Reaction[];
   displayNameText?: string;
   gifUrl?: string | null;
   timestamp?: string;

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { uniqueGcId, resetApp, signUp } from "./helpers";
 
 /**
  * Theme switching via the command palette.
@@ -9,7 +10,7 @@ import { test, expect } from "@playwright/test";
  * now applied as inline styles on <html>).
  */
 
-const UNIQUE_GC = () => String(Date.now() % 1_000_000);
+const UNIQUE_GC = uniqueGcId;
 
 const BACKTICK = String.fromCharCode(96); // avoid a literal backtick in source
 
@@ -27,28 +28,8 @@ async function openPalette(page: import("@playwright/test").Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await resetApp(page);
 });
-
-/** Helper: sign up a new user (server sets a session cookie). */
-let userCounter = 0;
-async function signUp(page: import("@playwright/test").Page) {
-  const name = `tester${Date.now()}_${userCounter++}`;
-  await page.goto("/signup");
-  await page.fill('input[placeholder="user"]', name);
-  await page.fill('input[placeholder="at least 8 chars"]', "password123");
-  await page.fill('input[placeholder="••••••••"]', "password123");
-  await page.click('button[type="submit"]');
-  // Wait for the chat page to mount (the signup response sets the session
-  // cookie + the app redirects to "/"). Without this, a reload fired too
-  // soon can beat the cookie landing, leaving /api/me returning 401 after
-  // reload and the chat page never mounting.
-  await expect(
-    page.locator('[data-testid="create-gc-toggle"]').first()
-  ).toBeVisible();
-  return name;
-}
 
 test("switching to the Cyberpunk theme changes the accent CSS variable", async ({
   page,

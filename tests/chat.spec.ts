@@ -1,4 +1,11 @@
 import { test, expect } from "@playwright/test";
+import {
+  uniqueGcId,
+  resetApp,
+  signUp,
+  createGroupChat,
+  sendMessage,
+} from "./helpers";
 
 /**
  * Full chat-flow tests.
@@ -9,45 +16,11 @@ import { test, expect } from "@playwright/test";
  * the production build (served from :3000) is exercised end-to-end.
  */
 
-const UNIQUE_GC = () => String(Date.now() % 1_000_000);
+const UNIQUE_GC = uniqueGcId;
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  // Clear localStorage so the sidebar starts fresh each test.
-  await page.evaluate(() => localStorage.clear());
+  await resetApp(page);
 });
-
-/** Helper: sign up a new user (server sets a session cookie). */
-let userCounter = 0;
-async function signUp(page: import("@playwright/test").Page, username?: string) {
-  const name = username ?? `tester${Date.now()}_${userCounter++}`;
-  await page.goto("/signup");
-  await page.fill('input[placeholder="user"]', name);
-  await page.fill('input[placeholder="at least 8 chars"]', "password123");
-  await page.fill('input[placeholder="••••••••"]', "password123");
-  await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="message-list"], [data-testid="create-gc-toggle"]').first()).toBeVisible();
-  return name;
-}
-
-/** Helper: open the create-GC form, fill id + name, submit, wait for chat. */
-async function createGroupChat(page: import("@playwright/test").Page, id: string, name: string) {
-  await page.click('[data-testid="create-gc-toggle"]');
-  await page.fill('[data-testid="create-gc-id"]', id);
-  await page.fill('[data-testid="create-gc-name"]', name);
-  await page.click('[data-testid="create-gc-submit"]');
-  await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
-}
-
-/** Helper: send one message as the logged-in user, waiting for the echo. */
-async function sendMessage(page: import("@playwright/test").Page, _displayName: string, text: string) {
-  await page.fill('[data-testid="message-input"]', text);
-  await page.press('[data-testid="message-input"]', "Enter");
-  // Wait for the single new bubble (WebSocket broadcast echoes back to sender).
-  await expect(
-    page.locator('[data-testid="message-bubble"]', { hasText: text })
-  ).toBeVisible();
-}
 
 // ---------------------------------------------------------------------------
 // 1. Creating a group chat
@@ -76,13 +49,13 @@ test("sends a message and sees it appear at the bottom", async ({ page }) => {
   const username = await signUp(page);
   await createGroupChat(page, id, "Send Room");
 
-  await sendMessage(page, username, "Hello, world!");
+  await sendMessage(page, "Hello, world!");
 
   // Exactly one bubble, and it contains the sent text + the username (server
   // sets the display name from the authenticated session).
   await expect(page.locator('[data-testid="message-bubble"]')).toHaveCount(1);
   const bubble = page.locator('[data-testid="message-bubble"]');
-  await expect(bubble).toContainText(`${username}:`);
+  await expect(bubble).toContainText(username);
   await expect(bubble).toContainText("Hello, world!");
 });
 
@@ -94,7 +67,7 @@ test("only one message appears per send (no duplicates)", async ({ page }) => {
   await signUp(page);
   await createGroupChat(page, id, "NoDupe Room");
 
-  await sendMessage(page, "", "Unique message");
+  await sendMessage(page, "Unique message");
 
   // Settle any extra broadcasts that a buggy client might emit.
   await page.waitForTimeout(600);
@@ -116,7 +89,7 @@ test("messages are ordered oldest-first (top to bottom) live and after refresh",
   // must still render oldest→newest, top→bottom.
   const texts = ["First message", "Second message", "Third message"];
   for (const text of texts) {
-    await sendMessage(page, "", text);
+    await sendMessage(page, text);
     await page.waitForTimeout(150);
   }
 
@@ -163,7 +136,7 @@ test("real-time: messages sent in one tab appear in another", async ({ browser }
   try {
   // Alice creates the GC; Bob joins the same freshly-created GC. Each has
   // their own account/session.
-  const aliceUser = await signUp(alice);
+  await signUp(alice);
   await createGroupChat(alice, id, name);
 
   // Seed Bob's localStorage BEFORE first navigation so the sidebar button is
@@ -174,19 +147,19 @@ test("real-time: messages sent in one tab appear in another", async ({ browser }
     },
     { gc: id, name }
   );
-  const bobUser = await signUp(bob);
+  await signUp(bob);
   await bob.click(`[data-testid="gc-button-${id}"]`);
   await expect(bob.locator('[data-testid="message-list"]')).toBeVisible();
 
   // Alice sends a message; Bob should receive it in real time.
-  await sendMessage(alice, aliceUser, "Hi Bob!");
+  await sendMessage(alice, "Hi Bob!");
   await expect(bob.locator('[data-testid="message-bubble"]')).toHaveCount(1, {
     timeout: 5_000,
   });
   await expect(bob.locator('[data-testid="message-bubble"]')).toContainText("Hi Bob!");
 
   // Bob replies; Alice should see it appended at the bottom.
-  await sendMessage(bob, bobUser, "Hey Alice!");
+  await sendMessage(bob, "Hey Alice!");
   await expect(alice.locator('[data-testid="message-bubble"]')).toHaveCount(2, {
     timeout: 5_000,
   });
@@ -206,7 +179,7 @@ test("messages persist across a page reload", async ({ page }) => {
   const id = UNIQUE_GC();
   await signUp(page);
   await createGroupChat(page, id, "Persist Room");
-  await sendMessage(page, "", "persisted hello");
+  await sendMessage(page, "persisted hello");
 
   await page.addInitScript(
     (gc) => {
@@ -338,7 +311,7 @@ test("leaving a room keeps other members in it", async ({ browser }) => {
     await expect(bob.getByText("no channel selected")).toBeVisible();
 
     // Alice's room is untouched and still usable.
-    await sendMessage(alice, "", "still here");
+    await sendMessage(alice, "still here");
     await expect(alice.locator('[data-testid="message-bubble"]')).toHaveCount(1);
   } finally {
     await aliceContext.close();

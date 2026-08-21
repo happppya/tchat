@@ -4,20 +4,12 @@ import type { Message } from "../types";
  * Format an SQLite timestamp string into a localized, human-readable form.
  */
 export function formatTimestamp(timestampStr: string | null | undefined): string {
-  if (!timestampStr) return "";
-
-  const utcTimestamp = timestampStr.includes("T")
-    ? `${timestampStr}Z`
-    : `${timestampStr.replace(" ", "T")}Z`;
-
-  const date = new Date(utcTimestamp);
-
-  if (isNaN(date.getTime())) return "";
-
+  const ms = parseTimestampMs(timestampStr ?? "");
+  if (ms === null) return "";
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "short",
     timeStyle: "short",
-  }).format(date);
+  }).format(new Date(ms));
 }
 
 /**
@@ -33,6 +25,17 @@ export function stripNonAscii(str: string): string {
 export function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen) + "...";
+}
+
+/**
+ * A short human-readable preview of a message for reply quotes: the body text,
+ * an attachment name, or "GIF" for gif-only messages.
+ */
+export function messagePreview(message: Message): string {
+  if (message.message_text) return message.message_text;
+  if (message.file_url) return `📎 ${message.file_name || "attachment"}`;
+  if (message.gif_url) return "GIF";
+  return "";
 }
 
 /**

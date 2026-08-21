@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import type { SavedGC } from "../types";
+import type { GroupChat, SavedGC } from "../types";
 import {
   getSavedGCs,
   removeGC,
@@ -8,7 +8,7 @@ import {
   mergeSavedGCs,
   GCS_CHANGED_EVENT,
 } from "../services/storage";
-import { fetchMyRooms } from "../services/api";
+import { fetchMyRooms, fetchPublicRooms } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
 import CreateGroupChat from "./CreateGroupChat";
 import { MAX_GC_ID_DIGITS } from "../constants";
@@ -28,6 +28,10 @@ export default function Sidebar({
 }: Props) {
   const [savedGCs, setSavedGCs] = useState<SavedGC[]>(getSavedGCs());
   const [roomCode, setRoomCode] = useState("");
+  const [tab, setTab] = useState<"channels" | "rooms">("channels");
+  const [publicRooms, setPublicRooms] = useState<GroupChat[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState("");
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
@@ -90,6 +94,27 @@ export default function Sidebar({
     setRoomCode(e.target.value.replace(/\D/g, "").slice(0, MAX_GC_ID_DIGITS));
   };
 
+  const loadPublicRooms = useCallback(async () => {
+    setRoomsLoading(true);
+    setRoomsError("");
+    try {
+      setPublicRooms(await fetchPublicRooms());
+    } catch (err) {
+      setRoomsError(
+        err instanceof Error ? err.message : "Failed to load rooms"
+      );
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, []);
+
+  // Load the discoverable-room list whenever the rooms tab is opened.
+  useEffect(() => {
+    if (tab === "rooms") {
+      loadPublicRooms();
+    }
+  }, [tab, loadPublicRooms]);
+
   const handleCreated = (id: number) => {
     refresh();
     onSelectGC(id);
@@ -109,7 +134,7 @@ export default function Sidebar({
       {/* Header */}
       <div className="px-3 py-2.5 border-b border-[var(--border-primary)]">
         <h1 className="text-[var(--accent)] glow text-lg font-normal tracking-wide">
-          termchat
+          tchat
         </h1>
         <span className="text-[var(--text-muted)] text-[10px]">
           v1.0.0
@@ -137,59 +162,118 @@ export default function Sidebar({
         />
       </div>
 
-      {/* Room list */}
-      <div className="px-3 pt-1 pb-2">
-        <label className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest block mb-1">
+      {/* Channel / room tabs */}
+      <div className="px-3 pt-1 pb-2 flex items-center gap-1">
+        <button
+          onClick={() => setTab("channels")}
+          data-testid="tab-channels"
+          className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
+            tab === "channels"
+              ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+              : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
+          }`}
+        >
           channels
-        </label>
+        </button>
+        <button
+          onClick={() => setTab("rooms")}
+          data-testid="tab-rooms"
+          className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
+            tab === "rooms"
+              ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+              : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
+          }`}
+        >
+          rooms
+        </button>
+        {tab === "rooms" && (
+          <button
+            onClick={loadPublicRooms}
+            disabled={roomsLoading}
+            data-testid="refresh-rooms"
+            className="ml-auto text-[var(--text-muted)] text-xs border-none bg-transparent cursor-pointer hover:text-[var(--text-primary)]"
+          >
+            {roomsLoading ? "[ … ]" : "[ refresh ]"}
+          </button>
+        )}
       </div>
-      <ul className="list-none px-2 pb-2 flex-1 overflow-y-auto">
-        {savedGCs.map((gc) => (
-          <li key={gc.id}>
+
+      {tab === "channels" ? (
+        <ul className="list-none px-2 pb-2 flex-1 overflow-y-auto">
+          {savedGCs.map((gc) => (
+            <li key={gc.id}>
+              <button
+                onClick={() => onSelectGC(gc.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  handleRemove(e, gc.id);
+                }}
+                data-testid={`gc-button-${gc.id}`}
+                className={`w-full text-left px-2 py-1.5 my-0.5 border-l-2 border-transparent text-[var(--text-secondary)] text-sm bg-transparent cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors ${
+                  activeGCId === gc.id
+                    ? "!border-[var(--accent)] !text-[var(--text-primary)] !bg-[var(--bg-tertiary)]"
+                    : ""
+                }`}
+              >
+                <span className="text-[var(--accent)] mr-1">
+                  {activeGCId === gc.id ? ">" : "·"}
+                </span>
+                {gc.name}
+                <span className="pl-1 text-[10px] text-[var(--text-muted)]">
+                  #{gc.id}
+                </span>
+              </button>
+            </li>
+          ))}
+          {savedGCs.length === 0 && (
+            <li className="text-center text-xs text-[var(--text-muted)] py-6 px-2">
+              $ no channels joined
+            </li>
+          )}
+        </ul>
+      ) : (
+        <div className="flex-1 overflow-y-auto px-2 pb-2">
+          {roomsError && (
+            <div className="text-[var(--error)] text-xs px-2 py-1">
+              err: {roomsError}
+            </div>
+          )}
+          {publicRooms.map((room) => (
             <button
-              onClick={() => onSelectGC(gc.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                handleRemove(e, gc.id);
-              }}
-              data-testid={`gc-button-${gc.id}`}
-              className={`w-full text-left px-2 py-1.5 my-0.5 border-l-2 border-transparent text-[var(--text-secondary)] text-sm bg-transparent cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors ${
-                activeGCId === gc.id
-                  ? "!border-[var(--accent)] !text-[var(--text-primary)] !bg-[var(--bg-tertiary)]"
-                  : ""
-              }`}
+              key={room.id}
+              onClick={() => onSelectGC(room.id)}
+              data-testid={`public-room-${room.id}`}
+              className="w-full text-left px-2 py-1.5 my-0.5 border-l-2 border-transparent text-[var(--text-secondary)] text-sm bg-transparent cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors"
             >
-              <span className="text-[var(--accent)] mr-1">
-                {activeGCId === gc.id ? ">" : "·"}
-              </span>
-              {gc.name}
+              <span className="text-[var(--accent)] mr-1">§</span>
+              {room.name}
               <span className="pl-1 text-[10px] text-[var(--text-muted)]">
-                #{gc.id}
+                #{room.id}
               </span>
             </button>
-          </li>
-        ))}
-        {savedGCs.length === 0 && (
-          <li className="text-center text-xs text-[var(--text-muted)] py-6 px-2">
-            $ no channels joined
-          </li>
-        )}
-      </ul>
+          ))}
+          {!roomsLoading && !roomsError && publicRooms.length === 0 && (
+            <div className="text-center text-xs text-[var(--text-muted)] py-6 px-2">
+              $ no public rooms
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* User + logout footer */}
+      {/* User + logout footer: the username is the profile button */}
       <div className="border-t border-[var(--border-primary)] px-3 py-2 flex items-center gap-2">
-        <span className="text-[var(--text-muted)] text-[10px] uppercase tracking-widest">
-          usr
-        </span>
-        <span className="text-[var(--accent)] text-xs flex-1 truncate" data-testid="current-user">
-          {user?.username ?? "—"}
-        </span>
         <button
           onClick={onEditProfile}
           data-testid="profile-button"
-          className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-1 hover:text-[var(--accent)] hover:border-[var(--accent)]/50 transition-colors cursor-pointer"
+          title="View / edit your profile"
+          className="flex-1 min-w-0 flex items-center text-left border-none bg-transparent p-0 cursor-pointer group"
         >
-          [ profile ]
+          <span
+            data-testid="current-user"
+            className="text-[var(--accent)] text-xs break-all group-hover:text-[var(--accent-light)] transition-colors"
+          >
+            {user?.username ?? "—"}
+          </span>
         </button>
         <button
           onClick={handleLogout}

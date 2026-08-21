@@ -1,6 +1,6 @@
-import { useRef, useEffect, useMemo } from "react";
-import type { Message } from "../types";
-import { groupMessages } from "../utils/format";
+import { useRef, useEffect, useMemo, useState } from "react";
+import type { FileAttachment, Message, ReplyTarget } from "../types";
+import { groupMessages, messagePreview } from "../utils/format";
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
 
@@ -14,11 +14,21 @@ interface Props {
   hasMore: boolean;
   /** True while an older page is being fetched. */
   loadingOlder: boolean;
-  onSendMessage: (text: string, gifUrl: string | null) => void;
+  onSendMessage: (
+    text: string,
+    gifUrl: string | null,
+    file?: FileAttachment | null,
+    replyToId?: number | null
+  ) => void;
   onDeleteRoom: () => void;
   onLeaveRoom: () => void;
   onViewProfile: (username: string) => void;
   onLoadOlder: () => void;
+  /** The logged-in user's id, passed down to gate edit/delete controls. */
+  currentUserId: number | null;
+  onEditMessage: (messageId: number, text: string) => void;
+  onDeleteMessage: (messageId: number) => void;
+  onToggleReaction: (messageId: number, emoji: string) => void;
 }
 
 export default function ChatWindow({
@@ -33,7 +43,12 @@ export default function ChatWindow({
   onLeaveRoom,
   onViewProfile,
   onLoadOlder,
+  currentUserId,
+  onEditMessage,
+  onDeleteMessage,
+  onToggleReaction,
 }: Props) {
+  const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -41,6 +56,23 @@ export default function ChatWindow({
   const scrollAnchorRef = useRef(0);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
+
+  const handleReply = (message: Message) => {
+    setReplyingTo({
+      id: message.id,
+      quote: messagePreview(message),
+      author: message.display_name || "unknown",
+    });
+  };
+
+  const handleComposerSend = (
+    text: string,
+    gifUrl: string | null,
+    file?: FileAttachment | null
+  ) => {
+    onSendMessage(text, gifUrl, file, replyingTo?.id ?? null);
+    setReplyingTo(null);
+  };
 
   const handleScroll = () => {
     const el = listRef.current;
@@ -140,14 +172,23 @@ export default function ChatWindow({
           <MessageBubble
             key={group.key}
             group={group}
+            currentUserId={currentUserId}
             onViewProfile={onViewProfile}
+            onEditMessage={onEditMessage}
+            onDeleteMessage={onDeleteMessage}
+            onReply={handleReply}
+            onToggleReaction={onToggleReaction}
           />
         ))}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Composer */}
-      <MessageComposer onSend={onSendMessage} />
+      <MessageComposer
+        onSend={handleComposerSend}
+        replyTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
+      />
     </div>
   );
 }

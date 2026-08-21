@@ -11,6 +11,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  const [isPublic, setIsPublic] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -26,10 +27,11 @@ export default function CreateGroupChat({ onCreated }: Props) {
     setBusy(true);
     setError("");
     try {
-      await createGroupChat(gcId, name.trim());
+      await createGroupChat(gcId, name.trim(), isPublic);
       saveGC(gcId, name.trim());
       setId("");
       setName("");
+      setIsPublic(false);
       setIsOpen(false);
       onCreated(gcId);
     } catch (err) {
@@ -47,11 +49,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
         data-testid="create-gc-toggle"
         className="inline-flex items-center gap-2 cursor-pointer border-none bg-transparent text-[var(--text-secondary)] text-sm hover:text-[var(--text-primary)] transition-colors"
       >
-        <span className="text-[var(--accent)]">+</span>
         new channel
-        <span className="text-[var(--text-muted)] text-xs">
-          {isOpen ? "[-]" : "[+]"}
-        </span>
       </button>
 
       {isOpen && (
@@ -76,6 +74,35 @@ export default function CreateGroupChat({ onCreated }: Props) {
             data-testid="create-gc-name"
             className="w-full border border-[var(--border-primary)] px-2 py-1.5 bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
           />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">
+              visibility
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsPublic(false)}
+              data-testid="visibility-private"
+              className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
+                !isPublic
+                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                  : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
+              }`}
+            >
+              private
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsPublic(true)}
+              data-testid="visibility-public"
+              className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
+                isPublic
+                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                  : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
+              }`}
+            >
+              public
+            </button>
+          </div>
           {error && (
             <div
               data-testid="create-gc-error"

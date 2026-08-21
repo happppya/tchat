@@ -1,7 +1,38 @@
-import type { GroupChat, Message, GiphyResponse, AuthUser, UserProfile } from "../types";
+import type {
+  GroupChat,
+  Message,
+  GiphyResponse,
+  AuthUser,
+  UserProfile,
+  Reaction,
+} from "../types";
 import { MESSAGES_PAGE_SIZE } from "../constants";
 
 const API_BASE = "/api";
+
+/**
+ * Shared JSON request helper: every endpoint parses the JSON body and, on a
+ * non-2xx response, throws the server's `error` message (falling back to a
+ * generic message). This removes the repeated fetch/parse/throw boilerplate
+ * that used to live in every endpoint function.
+ */
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? "Request failed");
+  }
+  return body as T;
+}
+
+/** JSON-POST body shorthand used by most mutating endpoints. */
+function jsonBody(body: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
 
 /**
  * Fetch a page of messages for a group chat, newest first (server ordering).
@@ -21,15 +52,13 @@ export async function fetchMessages(
     params.set("beforeSentAt", before.sentAt);
     params.set("beforeId", String(before.id));
   }
-  const res = await fetch(`${API_BASE}/getMessages?${params.toString()}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? "Failed to fetch messages");
-  }
-  return res.json();
+  return request<Message[]>(`/getMessages?${params.toString()}`);
 }
 
-/** Fetch info for a group chat */
+/**
+ * Fetch info for a group chat. Kept non-throwing on error statuses so callers
+ * can distinguish an "invalid room" body from a network failure.
+ */
 export async function fetchGCInfo(
   groupChatId: number
 ): Promise<GroupChat & { error?: string }> {
@@ -39,69 +68,75 @@ export async function fetchGCInfo(
   return res.json();
 }
 
-/** Create a new group chat */
+/** Create a new group chat. */
 export async function createGroupChat(
   id: number,
-  name: string
+  name: string,
+  isPublic = false
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/createGC`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, name }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to create group chat");
-  }
+  await request("/createGC", jsonBody({ id, name, isPublic }));
 }
 
 /** Delete a group chat. Only the room owner may do this. */
 export async function deleteGroupChat(groupChatId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/deleteGC`, {
+  await request("/deleteGC", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ groupChatId }),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to delete room");
-  }
+}
+
+/** Fetch discoverable public rooms for the rooms tab. */
+export async function fetchPublicRooms(): Promise<GroupChat[]> {
+  return request<GroupChat[]>("/publicRooms");
 }
 
 /** Fetch the rooms the current user is a member of (server-side record). */
 export async function fetchMyRooms(): Promise<GroupChat[]> {
-  const res = await fetch(`${API_BASE}/myRooms`);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to load rooms");
-  }
-  return body;
+  return request<GroupChat[]>("/myRooms");
 }
 
 /** Add the current user to a room's member list (idempotent). */
 export async function joinRoom(groupChatId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/joinRoom`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ groupChatId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to join room");
-  }
+  await request("/joinRoom", jsonBody({ groupChatId }));
 }
 
 /** Remove the current user from a room's member list. */
 export async function leaveRoom(groupChatId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/leaveRoom`, {
-    method: "POST",
+  await request("/leaveRoom", jsonBody({ groupChatId }));
+}
+
+/** Edit the body of one of your own messages. Returns the updated row. */
+export async function editMessage(
+  messageId: number,
+  messageText: string
+): Promise<Message> {
+  return request<Message>("/editMessage", {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ groupChatId }),
+    body: JSON.stringify({ messageId, messageText }),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to leave room");
-  }
+}
+
+/** Delete one of your own messages. */
+export async function deleteMessage(messageId: number): Promise<void> {
+  await request("/deleteMessage", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messageId }),
+  });
+}
+
+/** Toggle an emoji reaction on a message; returns the updated aggregate. */
+export async function reactToMessage(
+  messageId: number,
+  emoji: string
+): Promise<Reaction[]> {
+  const body = await request<{ reactions: Reaction[] }>(
+    "/reactToMessage",
+    jsonBody({ messageId, emoji })
+  );
+  return body.reactions ?? [];
 }
 
 /** Upload response: the served URL plus display metadata. */
@@ -117,26 +152,12 @@ export async function uploadFile(
   fileName: string,
   dataUrl: string
 ): Promise<UploadedFile> {
-  const res = await fetch(`${API_BASE}/upload`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName, dataUrl }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to upload file");
-  }
-  return body;
+  return request<UploadedFile>("/upload", jsonBody({ fileName, dataUrl }));
 }
 
 /** Fetch a user's public profile. */
 export async function getProfile(username: string): Promise<UserProfile> {
-  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(username)}`);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to load profile");
-  }
-  return body;
+  return request<UserProfile>(`/profile/${encodeURIComponent(username)}`);
 }
 
 /** Update the current user's bio and optional profile picture. */
@@ -144,27 +165,20 @@ export async function updateProfile(
   bio: string,
   pictureUrl: string
 ): Promise<AuthUser> {
-  const res = await fetch(`${API_BASE}/profile`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bio, pictureUrl }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Failed to save profile");
-  }
+  const body = await request<{ user: AuthUser }>(
+    "/profile",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bio, pictureUrl }),
+    }
+  );
   return body.user;
 }
 
-/** Search GIPHY for GIFs */
+/** Search GIPHY for GIFs. */
 export async function searchGifs(query: string): Promise<GiphyResponse> {
-  const res = await fetch(
-    `${API_BASE}/searchGifs?query=${encodeURIComponent(query)}`
-  );
-  if (!res.ok) {
-    throw new Error("Failed to search GIFs");
-  }
-  return res.json();
+  return request<GiphyResponse>(`/searchGifs?query=${encodeURIComponent(query)}`);
 }
 
 /**
@@ -175,15 +189,10 @@ export async function signup(
   username: string,
   password: string
 ): Promise<AuthUser> {
-  const res = await fetch(`${API_BASE}/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Signup failed");
-  }
+  const body = await request<{ user: AuthUser }>(
+    "/signup",
+    jsonBody({ username, password })
+  );
   return body.user;
 }
 
@@ -192,21 +201,16 @@ export async function login(
   username: string,
   password: string
 ): Promise<AuthUser> {
-  const res = await fetch(`${API_BASE}/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.error ?? "Login failed");
-  }
+  const body = await request<{ user: AuthUser }>(
+    "/login",
+    jsonBody({ username, password })
+  );
   return body.user;
 }
 
 /** Log out — clears the server session and browser cookie. */
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/logout`, { method: "POST" });
+  await request("/logout", { method: "POST" });
 }
 
 /** Fetch the current user from the session cookie. Returns null if logged out. */

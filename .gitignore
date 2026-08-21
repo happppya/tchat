@@ -3,4 +3,5 @@
 node_modules/
 database.db
 dist/
+dist-server/
 uploads/

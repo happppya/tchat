@@ -2,13 +2,14 @@
   "name": "chat-app-thing",
   "version": "1.0.0",
   "description": "Greetings Gitters and Hubbers! This repository is meant to hold the codes for our Chat app website thing with the most eloquent of posterities. The device of dine shall be most sufficient in running the fruits of our labors! We used the finest VS code to code most of it.\r PLEASE BE ADVISED<<< some things are omitted for the sake of security and for other reasons.",
-  "main": "server.js",
+  "main": "dist-server/server.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:server": "tsc -p tsconfig.server.json",
     "preview": "vite preview",
-    "start": "node server.js",
-    "typecheck": "tsc --noEmit",
+    "start": "npm run build:server && node dist-server/server.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui"
   },
@@ -29,15 +30,18 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
-    "socket.io": "^4.8.3",
     "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^6.0.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.0",
     "cross-env": "^10.1.0",
     "tailwindcss": "^4.3.3",

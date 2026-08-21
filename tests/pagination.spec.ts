@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
 
 /**
  * Message pagination: the server pages with a (sent_at, id) cursor (no
@@ -6,33 +7,7 @@ import { test, expect } from "@playwright/test";
  * the user scrolls up.
  */
 
-const UNIQUE_GC = () => String(Date.now() % 1_000_000);
-
-let userCounter = 0;
-async function signUp(page: import("@playwright/test").Page, username?: string) {
-  const name = username ?? `pager${Date.now()}_${userCounter++}`;
-  await page.goto("/signup");
-  await page.fill('input[placeholder="user"]', name);
-  await page.fill('input[placeholder="at least 8 chars"]', "password123");
-  await page.fill('input[placeholder="••••••••"]', "password123");
-  await page.click('button[type="submit"]');
-  await expect(
-    page.locator('[data-testid="create-gc-toggle"]').first()
-  ).toBeVisible();
-  return name;
-}
-
-async function createGroupChat(
-  page: import("@playwright/test").Page,
-  id: string,
-  name: string
-) {
-  await page.click('[data-testid="create-gc-toggle"]');
-  await page.fill('[data-testid="create-gc-id"]', id);
-  await page.fill('[data-testid="create-gc-name"]', name);
-  await page.click('[data-testid="create-gc-submit"]');
-  await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
-}
+const UNIQUE_GC = uniqueGcId;
 
 /**
  * Bulk-send messages through a second WebSocket in the page, waiting until the
@@ -84,8 +59,7 @@ async function bulkSend(
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await resetApp(page);
 });
 
 test("getMessages pages backward with a cursor, without overlap or gaps", async ({

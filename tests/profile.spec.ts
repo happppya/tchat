@@ -1,43 +1,17 @@
 import { test, expect } from "@playwright/test";
+import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
 
 /**
  * Profile flow tests: editing your own bio/picture, avatars in chat, and
  * viewing another user's profile by clicking their message.
  */
 
-const UNIQUE_GC = () => String(Date.now() % 1_000_000);
+const UNIQUE_GC = uniqueGcId;
 const PICTURE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10' fill='red'/%3E%3C/svg%3E";
 
-let userCounter = 0;
-async function signUp(page: import("@playwright/test").Page, username?: string) {
-  const name = username ?? `profiler${Date.now()}_${userCounter++}`;
-  await page.goto("/signup");
-  await page.fill('input[placeholder="user"]', name);
-  await page.fill('input[placeholder="at least 8 chars"]', "password123");
-  await page.fill('input[placeholder="••••••••"]', "password123");
-  await page.click('button[type="submit"]');
-  await expect(
-    page.locator('[data-testid="create-gc-toggle"]').first()
-  ).toBeVisible();
-  return name;
-}
-
-async function createGroupChat(
-  page: import("@playwright/test").Page,
-  id: string,
-  name: string
-) {
-  await page.click('[data-testid="create-gc-toggle"]');
-  await page.fill('[data-testid="create-gc-id"]', id);
-  await page.fill('[data-testid="create-gc-name"]', name);
-  await page.click('[data-testid="create-gc-submit"]');
-  await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
-}
-
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await resetApp(page);
 });
 
 test("a user can edit and persist their own profile", async ({ page }) => {

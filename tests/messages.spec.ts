@@ -1,40 +1,14 @@
 import { test, expect } from "@playwright/test";
+import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
 
 /**
  * Rich-message tests: markdown, fenced code blocks, and small file uploads.
  */
 
-const UNIQUE_GC = () => String(Date.now() % 1_000_000);
-
-let userCounter = 0;
-async function signUp(page: import("@playwright/test").Page, username?: string) {
-  const name = username ?? `msguser${Date.now()}_${userCounter++}`;
-  await page.goto("/signup");
-  await page.fill('input[placeholder="user"]', name);
-  await page.fill('input[placeholder="at least 8 chars"]', "password123");
-  await page.fill('input[placeholder="••••••••"]', "password123");
-  await page.click('button[type="submit"]');
-  await expect(
-    page.locator('[data-testid="create-gc-toggle"]').first()
-  ).toBeVisible();
-  return name;
-}
-
-async function createGroupChat(
-  page: import("@playwright/test").Page,
-  id: string,
-  name: string
-) {
-  await page.click('[data-testid="create-gc-toggle"]');
-  await page.fill('[data-testid="create-gc-id"]', id);
-  await page.fill('[data-testid="create-gc-name"]', name);
-  await page.click('[data-testid="create-gc-submit"]');
-  await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
-}
+const UNIQUE_GC = uniqueGcId;
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await resetApp(page);
 });
 
 test("fenced code blocks render as code", async ({ page }) => {

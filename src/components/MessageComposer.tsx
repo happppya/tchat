@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { uploadFile } from "../services/api";
 import { MAX_UPLOAD_BYTES, MAX_MESSAGE_LENGTH } from "../constants";
-import type { FileAttachment } from "../types";
+import { truncate } from "../utils/format";
+import type { FileAttachment, ReplyTarget } from "../types";
 import GifPicker from "./GifPicker";
 import Avatar from "./Avatar";
 
@@ -12,6 +13,9 @@ interface Props {
     gifUrl: string | null,
     file?: FileAttachment | null
   ) => void;
+  /** The message currently being replied to, if any. */
+  replyTo?: ReplyTarget | null;
+  onCancelReply?: () => void;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -23,7 +27,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export default function MessageComposer({ onSend }: Props) {
+export default function MessageComposer({ onSend, replyTo, onCancelReply }: Props) {
   const { user } = useAuth();
   const [text, setText] = useState("");
   const [gifUrl, setGifUrl] = useState<string | null>(null);
@@ -102,28 +106,28 @@ export default function MessageComposer({ onSend }: Props) {
         data-testid="file-input"
       />
 
-      {/* Top bar with error + username badge */}
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-[var(--error)] text-xs ml-auto">{error}</span>
-        <span className="text-[var(--text-muted)] text-[10px] uppercase tracking-widest">
-          user
-        </span>
-        <span
-          data-testid="display-name-input"
-          className="text-xs text-[var(--accent)] border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-1 select-none"
+      {/* Reply preview */}
+      {replyTo && (
+        <div
+          data-testid="reply-preview"
+          className="flex items-center gap-2 mb-1.5 text-xs text-[var(--text-muted)] border-l-2 border-[var(--accent)] pl-2"
         >
-          {promptName}
-        </span>
-      </div>
-
-      {/* Composer row with prompt */}
-      <div className="flex gap-2 items-end">
-        <span className="flex items-center gap-1.5 pt-2 select-none whitespace-nowrap">
-          <Avatar name={promptName} src={user?.picture_url ?? null} size={18} />
-          <span className="text-[var(--accent)] glow text-sm">
-            {promptName}$$
+          <span className="truncate">
+            replying to <span className="text-[var(--accent-light)]">{replyTo.author}</span>
+            {replyTo.quote && <>: “{truncate(replyTo.quote, 100)}”</>}
           </span>
-        </span>
+          <button
+            onClick={onCancelReply}
+            data-testid="cancel-reply"
+            className="ml-auto text-[var(--text-muted)] border-none bg-transparent cursor-pointer hover:text-[var(--error)]"
+          >
+            [ cancel ]
+          </button>
+        </div>
+      )}
+
+      {/* Composer row: message box with upload/GIF icons to its right */}
+      <div className="flex gap-2 items-end">
         <textarea
           ref={textareaRef}
           value={text}
@@ -135,6 +139,25 @@ export default function MessageComposer({ onSend }: Props) {
           data-testid="message-input"
           className="flex-1 min-h-10 max-h-[200px] box-border px-2 py-2 border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm leading-snug resize-none overflow-y-auto outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
         />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          data-testid="upload-button"
+          title="Attach a file"
+          aria-label="Attach a file"
+          className="h-10 w-10 flex-shrink-0 flex items-center justify-center border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-base cursor-pointer hover:bg-[var(--bg-tertiary)] hover:border-[var(--accent)]/60 transition-colors disabled:opacity-50"
+        >
+          {uploading ? "…" : "📎"}
+        </button>
+        <button
+          onClick={() => setGifPickerOpen((p) => !p)}
+          data-testid="gif-button"
+          title="Search GIFs"
+          aria-label="Search GIFs"
+          className="h-10 w-10 flex-shrink-0 flex items-center justify-center border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-base cursor-pointer hover:bg-[var(--bg-tertiary)] hover:border-[var(--accent)]/60 transition-colors"
+        >
+          🎞
+        </button>
       </div>
 
       {/* Selected file preview */}
@@ -174,22 +197,18 @@ export default function MessageComposer({ onSend }: Props) {
         </div>
       )}
 
-      {/* Buttons */}
-      <div className="flex gap-2 py-2">
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          data-testid="upload-button"
-          className="flex-1 h-7 box-border border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-50"
+      {/* Identity sits bottom-left; errors flush right */}
+      <div className="flex items-center gap-1.5 mt-1.5 min-h-5">
+        <Avatar name={promptName} src={user?.picture_url ?? null} size={16} />
+        <span
+          data-testid="composer-user"
+          className="text-xs text-[var(--text-muted)] break-all min-w-0"
         >
-          {uploading ? "[ uploading… ]" : "[ upload ]"}
-        </button>
-        <button
-          onClick={() => setGifPickerOpen((p) => !p)}
-          className="flex-1 h-7 box-border border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors"
-        >
-          [ gifs ]
-        </button>
+          {promptName}
+        </span>
+        <span className="text-[var(--error)] text-xs ml-auto text-right">
+          {error}
+        </span>
       </div>
 
       {/* GIF Picker */}

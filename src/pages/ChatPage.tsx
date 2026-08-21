@@ -31,6 +31,9 @@ export default function ChatPage() {
     loadingOlder,
     loadOlder,
     handleWSMessage,
+    editMessage,
+    deleteMessage,
+    toggleReaction,
   } = useMessages(activeGCId);
 
   // Wire WebSocket
@@ -48,10 +51,16 @@ export default function ChatPage() {
   const { send } = useWebSocket(handleWSIncoming);
 
   const handleSendMessage = useCallback(
-    (text: string, gifUrl: string | null, file?: FileAttachment | null) => {
+    (
+      text: string,
+      gifUrl: string | null,
+      file?: FileAttachment | null,
+      replyToId?: number | null
+    ) => {
       if (!activeGCId) return;
       // The server sets displayNameText from the authenticated session, so we
-      // don't send a client-supplied name (prevents identity spoofing).
+      // don't send a client-supplied name (prevents identity spoofing). The
+      // reply target is resolved + quoted server-side too.
       send(
         JSON.stringify({
           type: "message",
@@ -61,6 +70,7 @@ export default function ChatPage() {
           fileUrl: file?.url ?? null,
           fileName: file?.name ?? null,
           fileType: file?.type ?? null,
+          replyToId: replyToId ?? null,
         })
       );
     },
@@ -113,6 +123,48 @@ export default function ChatPage() {
       setActionError(err instanceof Error ? err.message : "Failed to leave room");
     }
   }, [activeGCId, gcName]);
+
+  const handleEditMessage = useCallback(
+    async (messageId: number, text: string) => {
+      try {
+        await editMessage(messageId, text);
+        setActionError("");
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : "Failed to edit message"
+        );
+      }
+    },
+    [editMessage]
+  );
+
+  const handleDeleteMessage = useCallback(
+    async (messageId: number) => {
+      try {
+        await deleteMessage(messageId);
+        setActionError("");
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : "Failed to delete message"
+        );
+      }
+    },
+    [deleteMessage]
+  );
+
+  const handleToggleReaction = useCallback(
+    async (messageId: number, emoji: string) => {
+      try {
+        await toggleReaction(messageId, emoji);
+        setActionError("");
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : "Failed to react"
+        );
+      }
+    },
+    [toggleReaction]
+  );
 
   const handleViewProfile = useCallback((username: string) => {
     setProfileUser(username);
@@ -220,7 +272,7 @@ export default function ChatPage() {
       {!activeGCId ? (
         <div className="flex-1 flex items-center justify-center flex-col text-[var(--text-muted)] text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-[var(--accent)] glow">termchat</span>
+            <span className="text-[var(--accent)] glow">tchat</span>
             <span className="text-[var(--text-muted)]">—</span>
             <span className="opacity-70">no channel selected</span>
           </div>
@@ -234,6 +286,7 @@ export default function ChatPage() {
         </div>
       ) : (
         <ChatWindow
+          key={activeGCId}
           messages={messages}
           gcName={gcName}
           isOwner={isOwner}
@@ -245,6 +298,10 @@ export default function ChatPage() {
           onLeaveRoom={handleLeaveRoom}
           onViewProfile={handleViewProfile}
           onLoadOlder={loadOlder}
+          currentUserId={user?.id ?? null}
+          onEditMessage={handleEditMessage}
+          onDeleteMessage={handleDeleteMessage}
+          onToggleReaction={handleToggleReaction}
         />
       )}
 

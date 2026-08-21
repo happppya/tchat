@@ -43,7 +43,7 @@ export default function SignupPage() {
       >
         <div className="border-b border-[var(--border-primary)] pb-2 mb-1">
           <h2 className="text-[var(--accent)] glow text-base font-normal">
-            termchat signup
+            tchat signup
           </h2>
           <span className="text-[var(--text-muted)] text-[10px]">
             create a new account
