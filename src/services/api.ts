@@ -1,15 +1,27 @@
-import type { GroupChat, Message, GiphyResponse, AuthUser } from "../types";
+import type { GroupChat, Message, GiphyResponse, AuthUser, UserProfile } from "../types";
+import { MESSAGES_PAGE_SIZE } from "../constants";
 
 const API_BASE = "/api";
 
-/** Fetch recent messages for a group chat */
+/**
+ * Fetch a page of messages for a group chat, newest first (server ordering).
+ * Pass `before` to fetch the page strictly older than that cursor for
+ * scroll-up pagination.
+ */
 export async function fetchMessages(
   groupChatId: number,
-  numMessages = 20
+  limit = MESSAGES_PAGE_SIZE,
+  before?: { sentAt: string; id: number } | null
 ): Promise<Message[]> {
-  const res = await fetch(
-    `${API_BASE}/getMessages?groupChatId=${groupChatId}&numMessages=${numMessages}`
-  );
+  const params = new URLSearchParams({
+    groupChatId: String(groupChatId),
+    limit: String(limit),
+  });
+  if (before) {
+    params.set("beforeSentAt", before.sentAt);
+    params.set("beforeId", String(before.id));
+  }
+  const res = await fetch(`${API_BASE}/getMessages?${params.toString()}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? "Failed to fetch messages");
@@ -54,6 +66,94 @@ export async function deleteGroupChat(groupChatId: number): Promise<void> {
   if (!res.ok) {
     throw new Error(body.error ?? "Failed to delete room");
   }
+}
+
+/** Fetch the rooms the current user is a member of (server-side record). */
+export async function fetchMyRooms(): Promise<GroupChat[]> {
+  const res = await fetch(`${API_BASE}/myRooms`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to load rooms");
+  }
+  return body;
+}
+
+/** Add the current user to a room's member list (idempotent). */
+export async function joinRoom(groupChatId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/joinRoom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ groupChatId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to join room");
+  }
+}
+
+/** Remove the current user from a room's member list. */
+export async function leaveRoom(groupChatId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/leaveRoom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ groupChatId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to leave room");
+  }
+}
+
+/** Upload response: the served URL plus display metadata. */
+export interface UploadedFile {
+  url: string;
+  fileName: string;
+  fileType: string;
+  size: number;
+}
+
+/** Upload a small file (as a base64 data URL) and return its served URL. */
+export async function uploadFile(
+  fileName: string,
+  dataUrl: string
+): Promise<UploadedFile> {
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName, dataUrl }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to upload file");
+  }
+  return body;
+}
+
+/** Fetch a user's public profile. */
+export async function getProfile(username: string): Promise<UserProfile> {
+  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(username)}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to load profile");
+  }
+  return body;
+}
+
+/** Update the current user's bio and optional profile picture. */
+export async function updateProfile(
+  bio: string,
+  pictureUrl: string
+): Promise<AuthUser> {
+  const res = await fetch(`${API_BASE}/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bio, pictureUrl }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to save profile");
+  }
+  return body.user;
 }
 
 /** Search GIPHY for GIFs */

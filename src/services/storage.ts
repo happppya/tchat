@@ -24,6 +24,31 @@ export function getSavedGCs(): SavedGC[] {
   }
 }
 
+/** Replace the saved-GC list wholesale (used to sync server rooms into the cache). */
+export function saveGCList(list: SavedGC[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SAVED_GC_LIST, JSON.stringify(list));
+    notifyGCsChanged();
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+/**
+ * Merge two saved-GC lists by id, keeping `primary` first (server rooms) and
+ * appending `fallback` entries (local cache) that aren't already present.
+ */
+export function mergeSavedGCs(primary: SavedGC[], fallback: SavedGC[]): SavedGC[] {
+  const seen = new Set<number>();
+  const merged: SavedGC[] = [];
+  for (const gc of [...primary, ...fallback]) {
+    if (seen.has(gc.id)) continue;
+    seen.add(gc.id);
+    merged.push(gc);
+  }
+  return merged;
+}
+
 /** Save a group chat to localStorage (moves to top if already exists) */
 export function saveGC(id: number, name: string): void {
   const list = getSavedGCs();

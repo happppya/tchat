@@ -46,6 +46,8 @@ export interface MessageGroup {
   /** Stable key for the group — author + first message id. */
   key: string;
   displayName: string;
+  /** Author avatar captured on the first message of the group. */
+  avatarUrl: string | null;
   /** The first timestamp in the group (for the header). */
   firstSentAt: string;
   messages: Message[];
@@ -73,6 +75,7 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
       groups.push({
         key: `${author}-${msg.id}`,
         displayName: author,
+        avatarUrl: msg.avatar_url ?? null,
         firstSentAt: msg.sent_at,
         messages: [msg],
       });

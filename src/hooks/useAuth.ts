@@ -61,5 +61,12 @@ export function useAuth() {
     set({ user: null, loading: false });
   }, []);
 
-  return { ...snapshot, login, signup, logout };
+  // Re-read the current user from the server (e.g. after editing a profile).
+  const refresh = useCallback(async () => {
+    const user = await fetchMe();
+    set({ user, loading: false });
+    return user;
+  }, []);
+
+  return { ...snapshot, login, signup, logout, refresh };
 }

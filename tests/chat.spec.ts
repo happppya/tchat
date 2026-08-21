@@ -296,3 +296,104 @@ test("a non-owner cannot delete a room", async ({ browser }) => {
     await joinerContext.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 11. Leaving a room
+// ---------------------------------------------------------------------------
+test("a user can leave a room", async ({ page }) => {
+  const id = UNIQUE_GC();
+  await signUp(page);
+  await createGroupChat(page, id, "Temporary Room");
+
+  await expect(page.locator('[data-testid="leave-room-button"]')).toBeVisible();
+
+  page.on("dialog", (d) => d.accept());
+  await page.click('[data-testid="leave-room-button"]');
+
+  await expect(page.getByText("no channel selected")).toBeVisible();
+  await expect(page.locator(`[data-testid="gc-button-${id}"]`)).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// 12. Leaving only removes the current user's membership
+// ---------------------------------------------------------------------------
+test("leaving a room keeps other members in it", async ({ browser }) => {
+  const id = UNIQUE_GC();
+  const aliceContext = await browser.newContext();
+  const bobContext = await browser.newContext();
+  const alice = await aliceContext.newPage();
+  const bob = await bobContext.newPage();
+
+  try {
+    await signUp(alice);
+    await createGroupChat(alice, id, "Shared Room");
+
+    await signUp(bob);
+    await bob.fill('[data-testid="room-code-input"]', id);
+    await bob.press('[data-testid="room-code-input"]', "Enter");
+    await expect(bob.locator('[data-testid="message-list"]')).toBeVisible();
+
+    bob.on("dialog", (d) => d.accept());
+    await bob.click('[data-testid="leave-room-button"]');
+    await expect(bob.getByText("no channel selected")).toBeVisible();
+
+    // Alice's room is untouched and still usable.
+    await sendMessage(alice, "", "still here");
+    await expect(alice.locator('[data-testid="message-bubble"]')).toHaveCount(1);
+  } finally {
+    await aliceContext.close();
+    await bobContext.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 13. Permanent user data: rooms load on a fresh device
+// ---------------------------------------------------------------------------
+test("rooms load from the server on a fresh device", async ({ browser }) => {
+  const username = `syncuser${Date.now()}`;
+  const id = UNIQUE_GC();
+
+  const ctx1 = await browser.newContext();
+  const ctx2 = await browser.newContext();
+  const device1 = await ctx1.newPage();
+  const device2 = await ctx2.newPage();
+
+  try {
+    await signUp(device1, username);
+    await createGroupChat(device1, id, "Cloud Room");
+
+    // Same account, different context (no localStorage): log in and expect the
+    // room to be listed from the server-side membership.
+    await device2.goto("/login");
+    await device2.fill('input[placeholder="user"]', username);
+    await device2.fill('input[placeholder="••••••••"]', "password123");
+    await device2.click('button[type="submit"]');
+    await expect(device2.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+
+    await expect(device2.locator(`[data-testid="gc-button-${id}"]`)).toBeVisible();
+  } finally {
+    await ctx1.close();
+    await ctx2.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 14. Empty rooms are automatically deleted
+// ---------------------------------------------------------------------------
+test("empty rooms are automatically deleted", async ({ page }) => {
+  const id = UNIQUE_GC();
+  await signUp(page);
+  await createGroupChat(page, id, "Ephemeral Room");
+
+  page.on("dialog", (d) => d.accept());
+  await page.click('[data-testid="leave-room-button"]');
+  await expect(page.getByText("no channel selected")).toBeVisible();
+
+  // Room now has no members; the cleanup job deletes it after the TTL.
+  await page.waitForTimeout(3500);
+
+  await page.fill('[data-testid="room-code-input"]', id);
+  await page.press('[data-testid="room-code-input"]', "Enter");
+  // Joining now fails because the room no longer exists on the server.
+  await expect(page.getByText("Failed to load messages")).toBeVisible();
+});

@@ -6,6 +6,12 @@ export interface Message {
   message_text: string | null;
   gif_url: string | null;
   sent_at: string;
+  /** Denormalized author avatar URL captured when the message was sent. */
+  avatar_url?: string | null;
+  /** Uploaded attachment (served URL + display metadata), when present. */
+  file_url?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
 }
 
 /** A group chat */
@@ -30,6 +36,10 @@ export interface WSMessage {
   displayNameText?: string;
   gifUrl?: string | null;
   timestamp?: string;
+  avatarUrl?: string | null;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileType?: string | null;
 }
 
 /** GIPHY image variants */
@@ -63,6 +73,22 @@ export interface ApiError {
 export interface AuthUser {
   id: number;
   username: string;
+  bio?: string | null;
+  picture_url?: string | null;
+}
+
+/** Public profile returned by /api/profile/:username */
+export interface UserProfile {
+  username: string;
+  bio: string | null;
+  picture_url: string | null;
+}
+
+/** A file attachment attached to an outgoing message. */
+export interface FileAttachment {
+  url: string;
+  name: string;
+  type: string;
 }
 
 /** Selected GIF state */

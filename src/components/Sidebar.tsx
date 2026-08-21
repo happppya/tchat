@@ -1,7 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SavedGC } from "../types";
-import { getSavedGCs, removeGC, GCS_CHANGED_EVENT } from "../services/storage";
+import {
+  getSavedGCs,
+  removeGC,
+  saveGCList,
+  mergeSavedGCs,
+  GCS_CHANGED_EVENT,
+} from "../services/storage";
+import { fetchMyRooms } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
 import CreateGroupChat from "./CreateGroupChat";
 import { MAX_GC_ID_DIGITS } from "../constants";
@@ -9,10 +16,16 @@ import { MAX_GC_ID_DIGITS } from "../constants";
 interface Props {
   activeGCId: number | null;
   onSelectGC: (id: number) => void;
+  onEditProfile: () => void;
   className?: string;
 }
 
-export default function Sidebar({ activeGCId, onSelectGC, className }: Props) {
+export default function Sidebar({
+  activeGCId,
+  onSelectGC,
+  onEditProfile,
+  className,
+}: Props) {
   const [savedGCs, setSavedGCs] = useState<SavedGC[]>(getSavedGCs());
   const [roomCode, setRoomCode] = useState("");
   const navigate = useNavigate();
@@ -32,6 +45,29 @@ export default function Sidebar({ activeGCId, onSelectGC, className }: Props) {
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(GCS_CHANGED_EVENT, onGCsChanged);
+    };
+  }, []);
+
+  // Load the user's permanent room list from the server on mount and merge it
+  // with the local cache. Server rooms come first; local-only entries stay so
+  // a room appears instantly before its join request finishes.
+  useEffect(() => {
+    let cancelled = false;
+    fetchMyRooms()
+      .then((serverRooms) => {
+        if (cancelled) return;
+        const merged = mergeSavedGCs(
+          serverRooms.map((g) => ({ id: g.id, name: g.name })),
+          getSavedGCs()
+        );
+        setSavedGCs(merged);
+        saveGCList(merged);
+      })
+      .catch(() => {
+        // Fall back to the local cache if the server is unreachable.
+      });
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -148,6 +184,13 @@ export default function Sidebar({ activeGCId, onSelectGC, className }: Props) {
         <span className="text-[var(--accent)] text-xs flex-1 truncate" data-testid="current-user">
           {user?.username ?? "—"}
         </span>
+        <button
+          onClick={onEditProfile}
+          data-testid="profile-button"
+          className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-1 hover:text-[var(--accent)] hover:border-[var(--accent)]/50 transition-colors cursor-pointer"
+        >
+          [ profile ]
+        </button>
         <button
           onClick={handleLogout}
           data-testid="logout-button"

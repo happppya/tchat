@@ -3,23 +3,35 @@ import { useNavigate } from "react-router-dom";
 import { useMessages } from "../hooks/useMessages";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../hooks/useAuth";
-import { deleteGroupChat } from "../services/api";
+import { deleteGroupChat, joinRoom, leaveRoom } from "../services/api";
 import { removeGC } from "../services/storage";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
 import CommandPalette from "../components/CommandPalette";
+import ProfileModal from "../components/ProfileModal";
 import type { CommandAction } from "../components/CommandPalette";
-import type { WSMessage } from "../types";
+import type { WSMessage, FileAttachment } from "../types";
 
 export default function ChatPage() {
   const [activeGCId, setActiveGCId] = useState<number | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [profileUser, setProfileUser] = useState<string | null>(null);
+  const [profileEditing, setProfileEditing] = useState(false);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [actionError, setActionError] = useState("");
 
-  const { messages, gcName, gcInfo, error, handleWSMessage } = useMessages(activeGCId);
+  const {
+    messages,
+    gcName,
+    gcInfo,
+    error,
+    hasMore,
+    loadingOlder,
+    loadOlder,
+    handleWSMessage,
+  } = useMessages(activeGCId);
 
   // Wire WebSocket
   const handleWSIncoming = useCallback(
@@ -36,7 +48,7 @@ export default function ChatPage() {
   const { send } = useWebSocket(handleWSIncoming);
 
   const handleSendMessage = useCallback(
-    (text: string, gifUrl: string | null) => {
+    (text: string, gifUrl: string | null, file?: FileAttachment | null) => {
       if (!activeGCId) return;
       // The server sets displayNameText from the authenticated session, so we
       // don't send a client-supplied name (prevents identity spoofing).
@@ -46,6 +58,9 @@ export default function ChatPage() {
           groupChatId: activeGCId,
           messageText: text,
           gifUrl,
+          fileUrl: file?.url ?? null,
+          fileName: file?.name ?? null,
+          fileType: file?.type ?? null,
         })
       );
     },
@@ -55,6 +70,9 @@ export default function ChatPage() {
   const handleSelectGC = useCallback((id: number) => {
     setActiveGCId(id);
     setActionError("");
+    // Selecting a room makes you a member (idempotent). Fire-and-forget so
+    // the chat opens immediately; the server records the membership.
+    if (id) joinRoom(id).catch(() => {});
     // On mobile, auto-close sidebar
     if (window.innerWidth < 768) {
       setSidebarVisible(false);
@@ -82,6 +100,35 @@ export default function ChatPage() {
       setActionError(err instanceof Error ? err.message : "Failed to delete room");
     }
   }, [activeGCId, gcName]);
+
+  const handleLeaveRoom = useCallback(async () => {
+    if (!activeGCId) return;
+    if (!window.confirm(`Leave room "${gcName}"?`)) return;
+    try {
+      await leaveRoom(activeGCId);
+      removeGC(activeGCId);
+      setActiveGCId(null);
+      setActionError("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to leave room");
+    }
+  }, [activeGCId, gcName]);
+
+  const handleViewProfile = useCallback((username: string) => {
+    setProfileUser(username);
+    setProfileEditing(false);
+  }, []);
+
+  const handleEditProfile = useCallback(() => {
+    if (!user) return;
+    setProfileUser(user.username);
+    setProfileEditing(true);
+  }, [user]);
+
+  const handleCloseProfile = useCallback(() => {
+    setProfileUser(null);
+    setProfileEditing(false);
+  }, []);
 
   // Global backtick (`) listener to open the command palette.
   useEffect(() => {
@@ -131,6 +178,13 @@ export default function ChatPage() {
         run: () => setSidebarVisible(true),
       },
       {
+        id: "edit-profile",
+        section: "Account",
+        label: "Edit profile",
+        keywords: "bio picture avatar",
+        run: handleEditProfile,
+      },
+      {
         id: "logout",
         section: "Account",
         label: "Log out",
@@ -142,7 +196,7 @@ export default function ChatPage() {
       },
     ],
     // logout + navigate are stable; refresh identity when they change
-    [logout, navigate]
+    [logout, navigate, handleEditProfile]
   );
 
   return (
@@ -150,6 +204,7 @@ export default function ChatPage() {
       <Sidebar
         activeGCId={activeGCId}
         onSelectGC={handleSelectGC}
+        onEditProfile={handleEditProfile}
         className={sidebarVisible ? "w-[240px] flex-shrink-0" : "hidden"}
       />
       {!sidebarVisible && (
@@ -182,9 +237,14 @@ export default function ChatPage() {
           messages={messages}
           gcName={gcName}
           isOwner={isOwner}
+          hasMore={hasMore}
+          loadingOlder={loadingOlder}
           error={error || actionError}
           onSendMessage={handleSendMessage}
           onDeleteRoom={handleDeleteRoom}
+          onLeaveRoom={handleLeaveRoom}
+          onViewProfile={handleViewProfile}
+          onLoadOlder={loadOlder}
         />
       )}
 
@@ -192,6 +252,12 @@ export default function ChatPage() {
         isOpen={paletteOpen}
         onClose={closePalette}
         actions={actions}
+      />
+
+      <ProfileModal
+        username={profileUser}
+        initialEditing={profileEditing}
+        onClose={handleCloseProfile}
       />
     </div>
   );

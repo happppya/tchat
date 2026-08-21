@@ -10,8 +10,15 @@ interface Props {
   error: string;
   /** Whether the current user created this room and may delete it. */
   isOwner: boolean;
+  /** True when there are older pages still available on the server. */
+  hasMore: boolean;
+  /** True while an older page is being fetched. */
+  loadingOlder: boolean;
   onSendMessage: (text: string, gifUrl: string | null) => void;
   onDeleteRoom: () => void;
+  onLeaveRoom: () => void;
+  onViewProfile: (username: string) => void;
+  onLoadOlder: () => void;
 }
 
 export default function ChatWindow({
@@ -19,17 +26,51 @@ export default function ChatWindow({
   gcName,
   error,
   isOwner,
+  hasMore,
+  loadingOlder,
   onSendMessage,
   onDeleteRoom,
+  onLeaveRoom,
+  onViewProfile,
+  onLoadOlder,
 }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to bottom when messages change.
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const shouldRestoreScrollRef = useRef(false);
+  const scrollAnchorRef = useRef(0);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
+
+  const handleScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+
+    // Stay glued to the bottom only while the user is actually near it, so a
+    // new live message doesn't yank them away from older history.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    stickToBottomRef.current = nearBottom;
+
+    // Scrolled to the top: request the previous page, remembering the scroll
+    // height so we can restore the viewport after the prepend.
+    if (el.scrollTop <= 24 && hasMore && !loadingOlder) {
+      shouldRestoreScrollRef.current = true;
+      scrollAnchorRef.current = el.scrollHeight;
+      onLoadOlder();
+    }
+  };
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (shouldRestoreScrollRef.current && el) {
+      // Older messages were prepended: keep the same content in view.
+      const delta = el.scrollHeight - scrollAnchorRef.current;
+      el.scrollTop += delta;
+      shouldRestoreScrollRef.current = false;
+    } else if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
 
   return (
     <div className="flex flex-col flex-1 m-1 ml-0 min-h-0">
@@ -37,10 +78,21 @@ export default function ChatWindow({
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <span className="text-[var(--accent)]">{"~"}</span>
         <span className="text-[var(--text-primary)] text-sm">{gcName}</span>
-        <span className="text-[var(--text-muted)] text-xs">
+        <span
+          data-testid="message-count"
+          className="text-[var(--text-muted)] text-xs"
+        >
           — {messages.length} msg{messages.length === 1 ? "" : "s"}
         </span>
         <span className="ml-auto flex items-center gap-2">
+          <button
+            onClick={onLeaveRoom}
+            data-testid="leave-room-button"
+            title="Leave this room"
+            className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
+          >
+            [ leave room ]
+          </button>
           {isOwner && (
             <button
               onClick={onDeleteRoom}
@@ -65,9 +117,19 @@ export default function ChatWindow({
 
       {/* Messages — oldest at top, newest at bottom */}
       <div
+        ref={listRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto flex flex-col gap-1 py-2 px-1"
         data-testid="message-list"
       >
+        {loadingOlder && (
+          <div
+            data-testid="loading-older"
+            className="text-center text-xs text-[var(--text-muted)] py-1"
+          >
+            $ loading older…
+          </div>
+        )}
         {groups.length === 0 && !error && (
           <div className="flex-1 flex items-center justify-center text-[var(--text-muted)] text-sm flex-col gap-2">
             <span className="opacity-50">$ awaiting input…</span>
@@ -75,7 +137,11 @@ export default function ChatWindow({
           </div>
         )}
         {groups.map((group) => (
-          <MessageBubble key={group.key} group={group} />
+          <MessageBubble
+            key={group.key}
+            group={group}
+            onViewProfile={onViewProfile}
+          />
         ))}
         <div ref={messagesEndRef} />
       </div>
