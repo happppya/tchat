@@ -1,6 +1,7 @@
 import 'dotenv/config';
 
 import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -67,6 +68,15 @@ async function main(): Promise<void> {
 
   // API routes are mounted after the DB is ready.
   app.use('/api', createRouter({ db, broadcast }));
+
+  // Catch any error that escapes a route and respond with JSON (plus a server
+  // log) instead of Express's default HTML page, so the client can surface a
+  // clean message and operators can see the stack in the logs.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    console.error(`[server] unhandled error ${req.method} ${req.path}:`, err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ error: 'Internal server error' });
+  });
 
   // Authenticate the WS handshake via the session cookie before upgrading.
   server.on('upgrade', async (request, socket: Duplex, head) => {

@@ -102,21 +102,24 @@ export function createRouter({
         cleanUser,
         hash,
       ]);
+      const user = await db.get(
+        'SELECT id, username, bio, picture_url FROM users WHERE username = ?',
+        [cleanUser]
+      );
+      if (!user) {
+        throw new Error('Inserted user not found on read-back');
+      }
+      const token = await createSession(user);
+      res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
+      console.log(`[auth] signup ok: ${user.username} (id ${user.id})`);
+      res.status(201).json({ user });
     } catch (err) {
       if (err && /UNIQUE/i.test(String((err as Error).message))) {
         return res.status(409).json({ error: 'Username already taken' });
       }
-      console.error('Signup failed:', err);
-      return res.status(500).json({ error: 'Failed to create account' });
+      console.error('[auth] signup failed:', err);
+      res.status(500).json({ error: 'Failed to create account' });
     }
-
-    const user = await db.get(
-      'SELECT id, username, bio, picture_url FROM users WHERE username = ?',
-      [cleanUser]
-    );
-    const token = await createSession(user);
-    res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
-    res.status(201).json({ user });
   });
 
   router.post('/login', async (req: Request, res: Response) => {
@@ -130,34 +133,41 @@ export function createRouter({
         .json({ error: 'Username and password are required' });
     }
 
-    const user = await db.get(
-      'SELECT id, username, password_hash, bio, picture_url FROM users WHERE username = ?',
-      [cleanUser]
-    );
+    try {
+      const user = await db.get(
+        'SELECT id, username, password_hash, bio, picture_url FROM users WHERE username = ?',
+        [cleanUser]
+      );
 
-    // Verify even when the user is missing to avoid a timing side-channel that
-    // reveals which usernames are registered.
-    const dummyHash =
-      'scrypt:32768:8:1:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000';
-    const ok = await verifyPassword(
-      cleanPass,
-      user ? user.password_hash : dummyHash
-    );
+      // Verify even when the user is missing to avoid a timing side-channel
+      // that reveals which usernames are registered.
+      const dummyHash =
+        'scrypt:32768:8:1:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000';
+      const ok = await verifyPassword(
+        cleanPass,
+        user ? user.password_hash : dummyHash
+      );
 
-    if (!user || !ok) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      if (!user || !ok) {
+        console.log(`[auth] login denied: ${cleanUser}`);
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      const token = await createSession(user);
+      res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
+      console.log(`[auth] login ok: ${user.username} (id ${user.id})`);
+      res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          bio: user.bio,
+          picture_url: user.picture_url,
+        },
+      });
+    } catch (err) {
+      console.error('[auth] login failed:', err);
+      res.status(500).json({ error: 'Login failed' });
     }
-
-    const token = await createSession(user);
-    res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
-    res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        bio: user.bio,
-        picture_url: user.picture_url,
-      },
-    });
   });
 
   router.post('/logout', async (req: Request, res: Response) => {

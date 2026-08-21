@@ -28,11 +28,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     const serverError = (body as { error?: string } | null)?.error;
     if (serverError) throw new Error(serverError);
+    console.error(
+      `[api] ${path} -> ${res.status} (${res.headers.get("content-type") || "no content-type"})`
+    );
     throw new Error(
       res.status >= 500
         ? `Server error (${res.status}). Please try again.`
         : `Request failed (${res.status}).`
     );
+  }
+  if (body == null) {
+    console.error(`[api] ${path} -> ${res.status} with an empty/non-JSON body`);
+    throw new Error("The server returned an unexpected response. Please try again.");
   }
   return body as T;
 }
@@ -44,6 +51,19 @@ function jsonBody(body: unknown): RequestInit {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
+}
+
+/**
+ * Extract the `user` object from a `{ user }` envelope, throwing a clear
+ * message when the response is malformed. A null envelope here is what used to
+ * surface as the cryptic "Cannot read properties of null (reading 'user')".
+ */
+function extractUser(body: unknown): AuthUser {
+  const user = (body as { user?: AuthUser } | null)?.user;
+  if (!user) {
+    throw new Error("The server returned an unexpected response. Please try again.");
+  }
+  return user;
 }
 
 /**
@@ -185,7 +205,7 @@ export async function updateProfile(
       body: JSON.stringify({ bio, pictureUrl }),
     }
   );
-  return body.user;
+  return extractUser(body);
 }
 
 /** Search GIPHY for GIFs. */
@@ -205,7 +225,7 @@ export async function signup(
     "/signup",
     jsonBody({ username, password })
   );
-  return body.user;
+  return extractUser(body);
 }
 
 /** Log in an existing user. Sets a session cookie on success. */
@@ -217,7 +237,7 @@ export async function login(
     "/login",
     jsonBody({ username, password })
   );
-  return body.user;
+  return extractUser(body);
 }
 
 /** Log out — clears the server session and browser cookie. */
