@@ -95,3 +95,16 @@ test("wrong password is rejected", async ({ page }) => {
 
   await expect(page.locator("text=Invalid username or password")).toBeVisible();
 });
+
+test("signup shows a clear inline error for a short password", async ({ page }) => {
+  const name = uniqueUsername("authuser");
+  await page.goto("/signup");
+  await page.fill('input[placeholder="user"]', name);
+  await page.fill('input[placeholder="at least 8 chars"]', "short");
+  await page.fill('input[placeholder="••••••••"]', "short");
+  await page.click('button[type="submit"]');
+
+  const err = page.locator('[data-testid="auth-error"]');
+  await expect(err).toBeVisible();
+  await expect(err).toContainText("at least 8 characters");
+});

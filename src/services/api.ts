@@ -17,10 +17,22 @@ const API_BASE = "/api";
  * that used to live in every endpoint function.
  */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
-  const body = await res.json().catch(() => ({}));
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, options);
+  } catch {
+    throw new Error("Can't reach the server. Check your connection and try again.");
+  }
+
+  const body = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? "Request failed");
+    const serverError = (body as { error?: string } | null)?.error;
+    if (serverError) throw new Error(serverError);
+    throw new Error(
+      res.status >= 500
+        ? `Server error (${res.status}). Please try again.`
+        : `Request failed (${res.status}).`
+    );
   }
   return body as T;
 }
@@ -213,11 +225,22 @@ export async function logout(): Promise<void> {
   await request("/logout", { method: "POST" });
 }
 
-/** Fetch the current user from the session cookie. Returns null if logged out. */
+/**
+ * Fetch the current user from the session cookie. Returns null when there is
+ * no valid session (401); throws on network failures or server errors so
+ * callers can tell "logged out" apart from "can't check right now".
+ */
 export async function fetchMe(): Promise<AuthUser | null> {
-  const res = await fetch(`${API_BASE}/me`);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/me`);
+  } catch {
+    throw new Error("Can't reach the server. Check your connection and try again.");
+  }
   if (res.status === 401) return null;
-  if (!res.ok) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load your account (${res.status}).`);
+  }
   const body = await res.json().catch(() => null);
   return body ? body.user : null;
 }

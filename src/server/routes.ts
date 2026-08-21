@@ -115,7 +115,7 @@ export function createRouter({
       [cleanUser]
     );
     const token = await createSession(user);
-    res.setHeader('Set-Cookie', sessionCookie(token));
+    res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
     res.status(201).json({ user });
   });
 
@@ -149,7 +149,7 @@ export function createRouter({
     }
 
     const token = await createSession(user);
-    res.setHeader('Set-Cookie', sessionCookie(token));
+    res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
     res.json({
       user: {
         id: user.id,

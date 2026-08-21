@@ -39,7 +39,11 @@ export default function LoginPage() {
           </span>
         </div>
         {error && (
-          <div className="border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-1.5 text-[var(--error)] text-xs">
+          <div
+            role="alert"
+            data-testid="auth-error"
+            className="border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-1.5 text-[var(--error)] text-xs"
+          >
             {error}
           </div>
         )}

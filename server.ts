@@ -19,6 +19,10 @@ import {
 import { CLEANUP_INTERVAL_MS, PROJECT_ROOT } from './src/server/constants';
 
 const app = express();
+// Trust the first reverse proxy so req.secure reflects X-Forwarded-Proto.
+// This keeps the session cookie's Secure flag correct behind nginx / load
+// balancers / PaaS routers (and prevents it from being forced on over HTTP).
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // Allow base64 data-URL uploads (up to the 2 MB file cap) through the JSON

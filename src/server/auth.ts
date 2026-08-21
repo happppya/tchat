@@ -166,8 +166,9 @@ export async function pruneExpiredSessions(): Promise<void> {
 /** Serialize a token into a Set-Cookie header value. */
 export function sessionCookie(
   token: string,
-  maxAgeMs: number = SESSION_TTL_MS
+  options: { maxAgeMs?: number; secure?: boolean } = {}
 ): string {
+  const maxAgeMs = options.maxAgeMs ?? SESSION_TTL_MS;
   const attrs = [
     `${SESSION_COOKIE}=${token}`,
     'Path=/',
@@ -175,8 +176,10 @@ export function sessionCookie(
     'SameSite=Lax',
     `Max-Age=${Math.floor(maxAgeMs / 1000)}`,
   ];
-  // Secure only over HTTPS in production; dev runs over plain HTTP.
-  if (process.env.NODE_ENV === 'production') attrs.push('Secure');
+  // Only mark Secure when the request actually arrived over HTTPS (directly or
+  // via a trusted proxy). Forcing it on whenever NODE_ENV=production breaks
+  // login/signup on plain-HTTP deploys, because browsers drop Secure cookies.
+  if (options.secure) attrs.push('Secure');
   return attrs.join('; ');
 }
 
