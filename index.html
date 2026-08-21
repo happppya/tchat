@@ -7,16 +7,23 @@
     @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400..900&display=swap');
 
     body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
       font-family: Inter, Arial, sans-serif;
       background: #1e1e24
     }
 
     .page-container {
+      height: 100vh;
+      overflow: hidden;
       display: flex;
       min-height: 100vh;
     }
 
     .main-content {
+      display: flex;
+      flex-direction: column;
       flex: 1;
       padding: 0px 0px 0px 10px;
     }
@@ -163,6 +170,18 @@
       background: #595965;
     }
 
+    .gc-button.current-gc {
+      background: #595965;
+      font-weight: bold;
+    }
+
+    .gc-button-id-display {
+      padding-left: 5px;
+      font-size: 11px;
+      font-style: italic;
+      opacity: 0.7;
+    }
+
     #displayName {
       margin-left: auto;
       width: 100px;
@@ -294,10 +313,17 @@
     }
 
     .messaging-window {
+      flex: 1;
       margin-top: 16px;
+      overflow-y: auto;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+
+    .messaging-window::-webkit-scrollbar {
+      display: none;
     }
 
     .message-item {
@@ -394,13 +420,25 @@
       height: 1px;
       width: 200px;
     }
+
+    .toggle-sidebar-btn {
+      cursor: pointer;
+      height: 50px;
+      width: 50px;
+      font-size: 30px;
+      color: #ababca;
+      border: none;
+      background: transparent;
+      padding: 0px 0px 4px 0px;
+      margin: 4px;
+    }
   </style>
   <title>Chat</title>
 </head>
 
 <body>
   <div class="page-container">
-    <div class="side-bar">
+    <div id="sideBar"class="side-bar">
       <h1 class="title-text">Chat </h1>
       <button id="createGcDropdownButton">Create Group Chat</button>
       <div id="gcCreateOptions" class="gc-create-options hidden">
@@ -413,9 +451,10 @@
       <ul id="savedChats">
       </ul>
     </div>
+    <button id="toggleSidebar" class="toggle-sidebar-btn">☰</button>
     <div id="placeholder_text" class="placeholder-text">
       <h1>Select a Group Chat to start messaging...</h1>
-      <h3>(for now use room code 1234)</h3>
+      <h2>(main gc: 1234)</h2>
     </div>
     <div id="main_content" class="main-content hidden">
       <div class="top-bar">
@@ -457,12 +496,14 @@
     const errorDisplayText = document.getElementById("errorMessage");
     const placeholderText = document.getElementById("placeholder_text");
     const mainContent = document.getElementById("main_content");
+    const sideBar = document.getElementById("sideBar");
     const groupchatIdField = document.getElementById("groupchatId");
     const savedChatList = document.getElementById("savedChats");
     const createGcDropdownButton = document.getElementById("createGcDropdownButton");
     const gcCreateOptions = document.getElementById("gcCreateOptions");
     const createGcIdField = document.getElementById("createGcIdField");
     const createGcNameField = document.getElementById("createGcNameField");
+    const toggleSidebarButton = document.getElementById("toggleSidebar");
     try {
       const savedName = localStorage.getItem("displayName");
       if (savedName) displayNameField.value = savedName.slice(0, 30);
@@ -481,25 +522,21 @@
     const messagingWindow = document.getElementById("messagingWindow");
 
     function formatTimestamp(timestampStr) {
-      if (!timestampStr) return "";
+  if (!timestampStr) return "";
 
-      // If timestamp comes back as a number (e.g. Unix epoch in ms)
-      const date = new Date(timestampStr);
+  const utcTimestamp = timestampStr.includes("T")
+    ? `${timestampStr}Z`
+    : `${timestampStr.replace(" ", "T")}Z`;
 
-      // Check if date is invalid
-      if (isNaN(date.getTime())) {
-        console.warn("Invalid timestamp string received:", timestampStr);
-        return "";
-      }
+  const date = new Date(utcTimestamp);
 
-      return date.toLocaleString([], {
-        month: '2-digit',
-        day: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
+  if (isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(date);
+}
 
     const socketProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${socketProtocol}//${location.host}/ws`);
@@ -545,8 +582,8 @@
       } else if (incomingMessage.type == "error") {
         console.error(incomingMessage.messageText);
         errorDisplayText.innerHTML = incomingMessage.messageText;
-      } else {
-        console.log("huh");
+      } else if (incomingMessage.type != "pong") {
+        console.log("huh?", incomingMessage);
       }
     });
 
@@ -605,7 +642,7 @@
         console.log("Group chat created successfully");
         getMessages(createGcIdField.value);
         addGcToStorage(createGcIdField.value, createGcNameField.value);
-        renderNewGcButton(createGcIdField.value, createGcNameField.value);
+        renderGcButton(createGcIdField.value, createGcNameField.value);
         currentGroupChatId = createGcIdField.value;
         createGcIdField.value = "";
         createGcNameField.value = "";
@@ -613,6 +650,14 @@
         createGcDropdownButton.classList.remove('isToggled');
       } else {
         console.error("Failed to create group chat");
+      }
+    }
+
+    toggleSidebarButton.onclick = function () {
+      if (sideBar.classList.contains('hidden')) {
+        sideBar.classList.remove('hidden');
+      } else {
+        sideBar.classList.add('hidden');
       }
     }
 
@@ -650,7 +695,15 @@
       }
     }
 
-    function renderNewGcButton(groupChatId, groupChatName) {
+    function highlightGcButton(groupChatButton) {
+      const highlightedButton = document.querySelector(".gc-button.current-gc");
+      if (highlightedButton) {
+        highlightedButton.classList.remove("current-gc");
+      }
+      groupChatButton.classList.add("current-gc");
+    }
+
+    function renderGcButton(groupChatId, groupChatName) {
       const existingGcButton = document.getElementById(String(groupChatId));
       if (existingGcButton) existingGcButton.remove();
       const gcButton = document.createElement("li");
@@ -663,11 +716,20 @@
           removeGcFromStorage(groupChatId);
           return;
         }
+        highlightGcButton(gcButton);
         getMessages(groupChatId);
         currentGroupChatId = groupChatId;
       }
-      gcButton.textContent = groupChatName;
+
+      gcButton.textContent = groupChatName + " ";
+      const idText = document.createElement("span");
+      idText.className = "gc-button-id-display";
+      idText.textContent = `(#${groupChatId})`;
+      gcButton.appendChild(idText);
+
       gcButton.className = "gc-button";
+      highlightGcButton(gcButton);
+
       gcButton.id = String(groupChatId);
       savedChatList.prepend(gcButton);
     }
@@ -681,7 +743,7 @@
       let savedGCs = JSON.parse(localStorage.getItem("savedGCList"));
       if (savedGCs) {
         savedGCs.forEach((gc) => {
-          renderNewGcButton(gc.id, gc.name);
+          renderGcButton(gc.id, gc.name);
         });
       }
     }
@@ -765,7 +827,11 @@
         const messages = data;
 
         groupchatInfo = await getGCInfo(groupChatId);
-
+        const savedGCs = getGcList();
+        if (!savedGCs.some(gc => gc.id == groupChatId)) {
+          addGcToStorage(groupChatId, groupchatInfo.name);
+          renderGcButton(groupChatId, groupchatInfo.name);
+        }
 
         renderMessages(messages);
         groupchatTitle.textContent = groupchatInfo.name || "Group Chat";
@@ -792,12 +858,14 @@
         searchGifs("trending");
       }
     });
+
     gifSearch.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         searchGifs(gifSearch.value.trim());
       }
     });
+
     function appendGifToMessage(container, gifUrl) {
       if (gifUrl) {
         const gifImg = document.createElement("img");
@@ -878,7 +946,7 @@
         }
         box.value = "";
         const displayName = displayNameField.value.trim();
-        //google.script.run.sendMessage(message, displayNameField.value.trim(), selectedGif);
+
         const payload = {
           type: 'message',
           groupChatId: currentGroupChatId,
@@ -887,25 +955,19 @@
           gifUrl: selectedGif ? selectedGif.url : null // ok giovan i added it
         };
 
-        /*fetch('/api/sendMessage', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });*/
         const groupchatInfo = await getGCInfo(currentGroupChatId);
         if (groupchatInfo.error || !currentGroupChatId || !groupchatInfo.name) {
           console.log("error");
           return;
         }
         addGcToStorage(currentGroupChatId, groupchatInfo.name);
-        renderNewGcButton(currentGroupChatId, groupchatInfo.name);
+        renderGcButton(currentGroupChatId, groupchatInfo.name);
         sendWSMessage(JSON.stringify(payload));
         selectedGif = null;
         selectedGifPreview.innerHTML = "";
       }
     });
+
     box.addEventListener("input", function () {
       this.style.height = "40px";
       this.style.height = (this.scrollHeight + 2 > 40 ? this.scrollHeight + 2 : 40) + "px";
