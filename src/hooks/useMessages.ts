@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { Message, WSMessage } from "../types";
+import type { Message, WSMessage, GroupChat } from "../types";
 import { fetchMessages, fetchGCInfo } from "../services/api";
 import { saveGC, getSavedGCs } from "../services/storage";
 
@@ -9,6 +9,7 @@ import { saveGC, getSavedGCs } from "../services/storage";
 export function useMessages(groupChatId: number | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [gcName, setGcName] = useState<string>("Group Chat");
+  const [gcInfo, setGcInfo] = useState<GroupChat | null>(null);
   const [error, setError] = useState<string>("");
   const loadingRef = useRef(false);
 
@@ -18,25 +19,28 @@ export function useMessages(groupChatId: number | null) {
     setError("");
 
     try {
-      const [msgs, gcInfo] = await Promise.all([
+      const [msgs, info] = await Promise.all([
         fetchMessages(gcId),
         fetchGCInfo(gcId),
       ]);
 
-      if ((gcInfo as { error?: string }).error) {
+      if ((info as { error?: string }).error) {
+        setGcInfo(null);
         setError("Invalid Room!");
         return;
       }
 
       setMessages(msgs.reverse());
-      setGcName(gcInfo.name || "Group Chat");
+      setGcInfo(info);
+      setGcName(info.name || "Group Chat");
 
       // Auto-save to localStorage
       const saved = getSavedGCs();
       if (!saved.some((gc) => gc.id === gcId)) {
-        saveGC(gcId, gcInfo.name || "Chat");
+        saveGC(gcId, info.name || "Chat");
       }
     } catch {
+      setGcInfo(null);
       setError("Failed to load messages");
     } finally {
       loadingRef.current = false;
@@ -50,6 +54,7 @@ export function useMessages(groupChatId: number | null) {
     } else {
       setMessages([]);
       setGcName("Group Chat");
+      setGcInfo(null);
       setError("");
     }
   }, [groupChatId, loadMessages]);
@@ -77,5 +82,5 @@ export function useMessages(groupChatId: number | null) {
     [groupChatId]
   );
 
-  return { messages, gcName, error, setGcName, loadMessages, handleWSMessage };
+  return { messages, gcName, gcInfo, error, setGcName, loadMessages, handleWSMessage };
 }

@@ -7,6 +7,17 @@ const { WebSocketServer } = require('ws');
 const readline = require('readline');
 require('dotenv').config();
 
+const {
+  hashPassword,
+  verifyPassword,
+  createSession,
+  destroySession,
+  sessionCookie,
+  clearSessionCookie,
+  readSession,
+  requireAuth,
+} = require('./src/server/auth');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -16,6 +27,10 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 let db;
+
+// Room codes are numeric IDs. Cap their length so codes stay short and
+// greppable (matches the 6-digit codes the tests generate).
+const MAX_GC_ID_DIGITS = 6;
 
 app.use(express.json());
 
@@ -71,13 +86,21 @@ async function initializeAndStore() {
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY,
-      display_name TEXT,
-      user_name TEXT,
-      email TEXT,
-      password TEXT
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Lightweight migration: the original schema stored credentials in ad-hoc
+  // columns (user_name / password). If those legacy columns still exist from
+  // an older database file, drop them so the new schema is the source of
+  // truth. This is idempotent — no-op once the columns are gone.
+  await migrateUsersTable(db);
+
+  // Track who created each room so the owner can delete it later.
+  await ensureGroupChatsOwnerColumn(db);
 
   try {
     const messages = await db.all('SELECT * FROM messages');
@@ -92,6 +115,134 @@ async function initializeAndStore() {
 
 initializeAndStore();
 
+/**
+ * Idempotent migration: ensure the users table matches the current schema.
+ * Drops legacy columns (user_name/email/password) if they survived from an
+ * older database file. SQLite doesn't support DROP COLUMN before 3.35, so we
+ * guard with a PRAGMA check and recreate the table when needed.
+ */
+async function migrateUsersTable(db) {
+  try {
+    const cols = await db.all("PRAGMA table_info(users)");
+    const names = cols.map((c) => c.name);
+    const hasLegacy = names.includes('user_name') || names.includes('email') || names.includes('password') || names.includes('display_name');
+    const hasNew = names.includes('username') && names.includes('password_hash');
+    if (hasLegacy && !hasNew) {
+      // Recreate with the clean schema. Existing rows can't be migrated
+      // meaningfully (old passwords were plaintext or differently shaped),
+      // so we drop them — users simply re-register.
+      await db.exec('DROP TABLE users');
+      await db.exec(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('users table migrated to new schema');
+    }
+  } catch (err) {
+    console.error('users table migration failed:', err.message);
+  }
+}
+
+/**
+ * Idempotent migration: add owner_user_id to group_chats so room ownership is
+ * recorded when a room is created. Existing rooms get NULL (no owner), which
+ * simply means no one can delete them via the API — the CLI still can.
+ */
+async function ensureGroupChatsOwnerColumn(db) {
+  try {
+    const cols = await db.all("PRAGMA table_info(group_chats)");
+    if (!cols.some((c) => c.name === 'owner_user_id')) {
+      await db.exec('ALTER TABLE group_chats ADD COLUMN owner_user_id INTEGER');
+      console.log('group_chats table migrated: added owner_user_id');
+    }
+  } catch (err) {
+    console.error('group_chats migration failed:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth routes
+// ---------------------------------------------------------------------------
+
+/** Validation: 3–30 chars, letters/digits/_/-/. — no spaces or symbols. */
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,30}$/;
+const MIN_PASSWORD = 8;
+const MAX_PASSWORD = 128;
+
+app.post('/api/signup', async (req, res) => {
+  const { username, password } = req.body || {};
+  const cleanUser = typeof username === 'string' ? username.trim() : '';
+  const cleanPass = typeof password === 'string' ? password : '';
+
+  if (!USERNAME_RE.test(cleanUser)) {
+    return res.status(400).json({ error: 'Username must be 3–30 chars (letters, digits, _ . -)' });
+  }
+  if (cleanPass.length < MIN_PASSWORD || cleanPass.length > MAX_PASSWORD) {
+    return res.status(400).json({ error: `Password must be ${MIN_PASSWORD}–${MAX_PASSWORD} characters` });
+  }
+
+  try {
+    const hash = await hashPassword(cleanPass);
+    await db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [cleanUser, hash]);
+  } catch (err) {
+    if (err && /UNIQUE/i.test(String(err.message))) {
+      return res.status(409).json({ error: 'Username already taken' });
+    }
+    console.error('Signup failed:', err);
+    return res.status(500).json({ error: 'Failed to create account' });
+  }
+
+  // Immediately create a session and log the user in.
+  const user = await db.get('SELECT id, username FROM users WHERE username = ?', [cleanUser]);
+  const token = createSession(user);
+  res.setHeader('Set-Cookie', sessionCookie(token));
+  res.status(201).json({ user: { id: user.id, username: user.username } });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  const cleanUser = typeof username === 'string' ? username.trim() : '';
+  const cleanPass = typeof password === 'string' ? password : '';
+
+  if (!cleanUser || !cleanPass) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  const user = await db.get('SELECT id, username, password_hash FROM users WHERE username = ?', [cleanUser]);
+
+  // Run a verify regardless of whether the user exists, to avoid a timing
+  // side-channel that reveals which usernames are registered. We compare
+  // against a dummy hash when the row is missing.
+  const dummyHash = 'scrypt:32768:8:1:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000';
+  const ok = await verifyPassword(cleanPass, user ? user.password_hash : dummyHash);
+
+  if (!user || !ok) {
+    return res.status(401).json({ error: 'Invalid username or password' });
+  }
+
+  const token = createSession(user);
+  res.setHeader('Set-Cookie', sessionCookie(token));
+  res.json({ user: { id: user.id, username: user.username } });
+});
+
+app.post('/api/logout', (req, res) => {
+  const cookieHeader = req.headers.cookie || '';
+  const match = cookieHeader.match(/(?:^|;)\s*sid=([^;]+)/);
+  if (match) destroySession(match[1]);
+  res.setHeader('Set-Cookie', clearSessionCookie());
+  res.json({ ok: true });
+});
+
+app.get('/api/me', (req, res) => {
+  const session = readSession(req);
+  if (!session) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: { id: session.userId, username: session.username } });
+});
+
 function shutdown() {
   console.log("Closing database...");
   db.close();
@@ -104,9 +255,9 @@ async function addMessageToTable(groupChatId, messageText, displayNameText, gifU
   await db.run(query, [groupChatId, displayNameText, messageText, gifUrl, timestamp]);
 }
 
-async function createGroupChat(gc_id, gc_name) {
-  const query = `INSERT INTO group_chats (id, name) VALUES (?, ?)`;
-  await db.run(query, [gc_id, gc_name]);
+async function createGroupChat(gc_id, gc_name, owner_user_id = null) {
+  const query = `INSERT INTO group_chats (id, name, owner_user_id) VALUES (?, ?, ?)`;
+  await db.run(query, [gc_id, gc_name, owner_user_id]);
   console.log(`GC created: ${gc_name} (ID: ${gc_id})`);
 }
 
@@ -136,7 +287,7 @@ async function validateGCID(gc_id) {
   return result !== undefined;
 }
 
-app.get('/api/getMessages', async (req, res) => {
+app.get('/api/getMessages', requireAuth, async (req, res) => {
   const start = performance.now();
   const { groupChatId, numMessages } = req.query;
   if (numMessages > 100) {
@@ -158,7 +309,7 @@ app.get('/api/getMessages', async (req, res) => {
   res.json(messages);
 });
 
-app.get('/api/getGCInfo', async (req, res) => {
+app.get('/api/getGCInfo', requireAuth, async (req, res) => {
   const start = performance.now();
   const { groupChatId } = req.query;
 
@@ -176,16 +327,70 @@ app.get('/api/getGCInfo', async (req, res) => {
   res.json(groupChat);
 });
 
-app.post('/api/createGC', async (req, res) => {
-  const data = req.body;
-  await createGroupChat(data.id, data.name);
-  res.status(201).json({ message: 'Group chat created successfully' });
+app.post('/api/createGC', requireAuth, async (req, res) => {
+  const { id, name } = req.body || {};
+  const idStr = String(id ?? '').trim();
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+
+  // Room codes are 1–6 digits. Reject anything else rather than letting an
+  // oversized code (or a negative value) become a confusing DB entry.
+  if (!/^\d{1,6}$/.test(idStr) || parseInt(idStr, 10) <= 0) {
+    return res.status(400).json({ error: `Room code must be 1–${MAX_GC_ID_DIGITS} digits` });
+  }
+  if (!cleanName) {
+    return res.status(400).json({ error: 'Room name is required' });
+  }
+
+  const gcId = parseInt(idStr, 10);
+
+  try {
+    // Explicit duplicate check so the client can tell the user why creation
+    // failed instead of surfacing a generic 500.
+    const existing = await db.get('SELECT id FROM group_chats WHERE id = ?', [gcId]);
+    if (existing) {
+      return res.status(409).json({ error: 'A room with this code already exists' });
+    }
+
+    await createGroupChat(gcId, cleanName, req.session.userId);
+    res.status(201).json({ message: 'Group chat created successfully' });
+  } catch (err) {
+    // Safety net for races: the PRIMARY KEY constraint catches a duplicate
+    // that slipped in between the SELECT and the INSERT.
+    if (/UNIQUE/i.test(String(err && err.message))) {
+      return res.status(409).json({ error: 'A room with this code already exists' });
+    }
+    console.error('Create GC failed:', err);
+    res.status(500).json({ error: 'Failed to create group chat' });
+  }
+});
+
+app.delete('/api/deleteGC', requireAuth, async (req, res) => {
+  const { groupChatId } = req.body || {};
+  const idStr = String(groupChatId ?? '').trim();
+
+  if (!/^\d{1,6}$/.test(idStr) || parseInt(idStr, 10) <= 0) {
+    return res.status(400).json({ error: 'Invalid room code' });
+  }
+
+  const gcId = parseInt(idStr, 10);
+  const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [gcId]);
+
+  if (!groupChat) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+
+  if (groupChat.owner_user_id !== req.session.userId) {
+    return res.status(403).json({ error: 'Only the room owner can delete this room' });
+  }
+
+  await destroyGroupChat(gcId);
+  res.json({ message: 'Room deleted' });
 });
 
 const hidden_inventory_key = process.env.GIPHY_API_KEY;
 
 // Fixed /api/searchGifs route
-app.get('/api/searchGifs', async (req, res) => {
+app.get('/api/searchGifs', requireAuth, async (req, res) => {
   const start = performance.now();
   const { query } = req.query;
   try {
@@ -203,8 +408,14 @@ app.get('/api/searchGifs', async (req, res) => {
   console.log(`searchGifs took ${end - start} ms`);
 });
 
-wss.on('connection', (ws) => {
-  console.log('New client connected!');
+wss.on('connection', (ws, request) => {
+  // The session was resolved in the upgrade handler and stashed on the ws.
+  const session = ws.session;
+  if (!session) {
+    ws.close(1008, 'Authentication required');
+    return;
+  }
+  console.log(`Client connected: ${session.username}`);
 
   // Listen for messages from this specific client
   ws.on('message', async (message) => {
@@ -214,15 +425,18 @@ wss.on('connection', (ws) => {
 
     let messageJSON = JSON.parse(messageString);
     let returnJSON = {};
-    let { type, groupChatId = 0, messageText = '', displayNameText = '', gifUrl = '' } = messageJSON;
+    let { type, groupChatId = 0, messageText = '', gifUrl = '' } = messageJSON;
+    // The display name is always the authenticated username — clients cannot
+    // spoof another user's identity.
+    const displayNameText = session.username;
     if (type === 'ping') {
       returnJSON.type = 'pong';
       ws.send(JSON.stringify(returnJSON));
       return;
     }
-    if (((!messageText && !gifUrl) || !displayNameText) && messageJSON.type !== 'ping') {
+    if ((!messageText && !gifUrl) && messageJSON.type !== 'ping') {
       returnJSON.type = 'error';
-      returnJSON.messageText = 'Either message text or display name is blank';
+      returnJSON.messageText = 'Message text is blank';
       ws.send(JSON.stringify(returnJSON));
       return;
     }
@@ -244,6 +458,9 @@ wss.on('connection', (ws) => {
     const sqliteTextTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     messageJSON.timestamp = sqliteTextTimestamp;
     messageJSON.type = 'message';
+    // Include the authenticated display name so live recipients can render the
+    // author. (Clients can't spoof it — displayNameText comes from the session.)
+    messageJSON.displayNameText = displayNameText;
     await addMessageToTable(groupChatId, messageText, displayNameText, gifUrl, sqliteTextTimestamp);
     wss.clients.forEach((client) => {
       // Check if the connection is open before sending
@@ -267,13 +484,26 @@ server.on('upgrade', (request, socket, head) => { //black magic
     return;
   }
 
+  // Authenticate the WS handshake via the session cookie. Unauthenticated
+  // upgrades are rejected before the connection is established.
+  const session = readSession(request);
+  if (!session) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
   wss.handleUpgrade(request, socket, head, (ws) => {
+    // Stash the resolved session so the connection handler can use it.
+    ws.session = session;
     wss.emit('connection', ws, request);
   });
 });
 
-server.listen(3000, () => {
-  console.log("Server running on port 3000");
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
 rl.on('line', async (line) => {

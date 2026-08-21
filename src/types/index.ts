@@ -12,6 +12,8 @@ export interface Message {
 export interface GroupChat {
   id: number;
   name: string;
+  /** User id of the room's creator, when known. Null for legacy rooms. */
+  owner_user_id?: number | null;
 }
 
 /** Saved group chat in local storage */
@@ -55,6 +57,12 @@ export interface GiphyResponse {
 /** API error response */
 export interface ApiError {
   error: string;
+}
+
+/** Authenticated user returned by /api/signup, /api/login, /api/me */
+export interface AuthUser {
+  id: number;
+  username: string;
 }
 
 /** Selected GIF state */
