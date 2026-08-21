@@ -72,9 +72,6 @@ const UPLOAD_DIR = path.join(PROJECT_ROOT, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// Also serve root-level legacy HTML files (popup.html for Chrome extension).
-app.use(express.static(PROJECT_ROOT));
-
 // SPA fallback: any non-API, non-static route -> dist/index.html.
 app.get(/^(?!\/api\/|\/ws|\/uploads\/).*/, (req, res) => {
   res.sendFile(path.join(PROJECT_ROOT, 'dist', 'index.html'), (err) => {

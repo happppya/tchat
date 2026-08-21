@@ -5,3 +5,4 @@ database.db
 dist/
 dist-server/
 uploads/
+test-results/
