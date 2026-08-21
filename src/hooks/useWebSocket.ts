@@ -7,6 +7,33 @@ const PING_INTERVAL = 30_000;
 const RECONNECT_DELAY = 3_000;
 
 /**
+ * Resolve the WebSocket endpoint. Precedence: explicit `VITE_WS_URL`, then the
+ * host derived from `VITE_API_URL`, then the page's own origin. This lets a
+ * separately-hosted frontend reach a WebSocket on another origin.
+ */
+function resolveWsUrl(): string {
+  const explicit = import.meta.env.VITE_WS_URL;
+  if (explicit) return explicit;
+
+  const api = import.meta.env.VITE_API_URL;
+  if (api && /^https?:\/\//i.test(api)) {
+    try {
+      const url = new URL(api);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.pathname = "/ws";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      // Fall through to the same-origin default below.
+    }
+  }
+
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${location.host}/ws`;
+}
+
+/**
  * Manages a single, stable WebSocket connection to the server.
  *
  * Guarantees that at most one socket is ever alive, even across React
@@ -75,8 +102,7 @@ export function useWebSocket(onMessage: MessageHandler) {
 
       closeActiveSocket();
 
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${location.host}/ws`);
+      const ws = new WebSocket(resolveWsUrl());
       socketRef.current = ws;
 
       ws.addEventListener("open", () => {

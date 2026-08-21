@@ -174,7 +174,7 @@ export function createRouter({
     const cookieHeader = req.headers.cookie || '';
     const match = cookieHeader.match(/(?:^|;)\s*sid=([^;]+)/);
     if (match) await destroySession(match[1]);
-    res.setHeader('Set-Cookie', clearSessionCookie());
+    res.setHeader('Set-Cookie', clearSessionCookie(req.secure));
     res.json({ ok: true });
   });
 

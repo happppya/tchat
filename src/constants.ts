@@ -1,3 +1,13 @@
+/**
+ * Base URL for the REST API. Defaults to the same-origin `/api` path; set
+ * `VITE_API_URL` (e.g. `https://api.example.com/api`) when the frontend and
+ * backend are hosted on different origins.
+ */
+export const API_BASE = (import.meta.env.VITE_API_URL || "/api").replace(
+  /\/+$/,
+  ""
+);
+
 /** Maximum number of digits allowed in a room code (also enforced server-side). */
 export const MAX_GC_ID_DIGITS = 6;
 

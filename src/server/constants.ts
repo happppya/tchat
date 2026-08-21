@@ -16,6 +16,19 @@ export const EMPTY_ROOM_TTL_MS =
 export const CLEANUP_INTERVAL_MS =
   Number(process.env.CLEANUP_INTERVAL_MS) || 5 * 60 * 1000;
 
+/**
+ * Origin of the frontend when it is hosted separately (e.g. Appwrite). When
+ * set, the server enables CORS for this origin and marks the session cookie
+ * SameSite=None so cross-origin requests carry it.
+ */
+export const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || '').replace(
+  /\/+$/,
+  ''
+);
+
+/** Session cookie SameSite policy: cross-site when a separate frontend origin is configured. */
+export const COOKIE_SAME_SITE: 'Lax' | 'None' = FRONTEND_ORIGIN ? 'None' : 'Lax';
+
 // Text messages can carry markdown/code blocks, so allow a roomier body than
 // the old 300-char cap. Files are capped separately to protect the disk.
 export const MAX_MESSAGE_LENGTH = 4000;

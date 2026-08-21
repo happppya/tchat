@@ -72,6 +72,7 @@ npm run build:server # compile the backend to dist-server/
 npm start            # build:server + run dist-server/server.js
 npm run typecheck    # typecheck both the frontend and the backend
 npm run test         # Playwright suite (self-hosted on :3000)
+npm run test:unit    # Vitest unit tests (src/**/*.test.ts, mocked fetch)
 ```
 
 The backend is TypeScript compiled to CommonJS into `dist-server/` via

@@ -17,13 +17,44 @@ import {
   pruneExpiredSessions,
   type Session,
 } from './src/server/auth';
-import { CLEANUP_INTERVAL_MS, PROJECT_ROOT } from './src/server/constants';
+import {
+  CLEANUP_INTERVAL_MS,
+  FRONTEND_ORIGIN,
+  PROJECT_ROOT,
+} from './src/server/constants';
 
 const app = express();
 // Trust the first reverse proxy so req.secure reflects X-Forwarded-Proto.
 // This keeps the session cookie's Secure flag correct behind nginx / load
 // balancers / PaaS routers (and prevents it from being forced on over HTTP).
 app.set('trust proxy', 1);
+
+// CORS: when the frontend is hosted on a different origin (e.g. Appwrite),
+// allow it to call this API and carry the session cookie. Without
+// FRONTEND_ORIGIN this is a no-op (same-origin deployment).
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (!FRONTEND_ORIGIN) return next();
+
+  res.setHeader('Access-Control-Allow-Origin', FRONTEND_ORIGIN);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Vary', 'Origin');
+
+  if (req.method === 'OPTIONS') {
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET,POST,PUT,DELETE,OPTIONS'
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] || 'Content-Type'
+    );
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 const server = http.createServer(app);
 
 // Allow base64 data-URL uploads (up to the 2 MB file cap) through the JSON
@@ -83,6 +114,18 @@ async function main(): Promise<void> {
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
 
     if (url.pathname !== '/ws') {
+      socket.destroy();
+      return;
+    }
+
+    // Reject cross-origin handshakes from unexpected origins when a frontend
+    // origin is configured (browsers always send Origin on WS handshakes).
+    if (
+      FRONTEND_ORIGIN &&
+      request.headers.origin &&
+      request.headers.origin !== FRONTEND_ORIGIN
+    ) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
     }

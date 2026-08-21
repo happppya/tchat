@@ -64,11 +64,36 @@ npm run build   # typecheck + build the frontend into dist/
 npm start       # compile the server (dist-server/) and serve the SPA
 ```
 
+## Split hosting (Appwrite + Render)
+
+You can host the SPA on Appwrite and the API on Render. Because they are
+different origins, cookies and CORS need explicit configuration.
+
+**Backend (Render)** — set the frontend's origin:
+
+```bash
+FRONTEND_ORIGIN=https://<your-app>.appwrite.global
+```
+
+This enables CORS with credentials for that origin and marks the session
+cookie `SameSite=None; Secure` so the Appwrite-hosted SPA can send it
+cross-origin. (Render serves HTTPS, which `Secure` requires.)
+
+**Frontend (Appwrite)** — set the API/WebSocket URLs at build time:
+
+```bash
+VITE_API_URL=https://<your-backend>.onrender.com/api
+VITE_WS_URL=wss://<your-backend>.onrender.com/ws   # optional; derived from VITE_API_URL
+```
+
+Then run `npm run build` and deploy `dist/` to Appwrite.
+
 ## Testing
 
 ```bash
 npm run typecheck
 npm run test      # Playwright end-to-end suite
+npm run test:unit # Vitest unit tests (mocked fetch)
 ```
 
 The test suite starts the server against `./test-database.db` with short empty-room cleanup settings, so it doesn't touch a running development database.

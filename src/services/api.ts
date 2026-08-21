@@ -6,9 +6,7 @@ import type {
   UserProfile,
   Reaction,
 } from "../types";
-import { MESSAGES_PAGE_SIZE } from "../constants";
-
-const API_BASE = "/api";
+import { API_BASE, MESSAGES_PAGE_SIZE } from "../constants";
 
 /**
  * Shared JSON request helper: every endpoint parses the JSON body and, on a
@@ -19,7 +17,10 @@ const API_BASE = "/api";
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, options);
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials: "include",
+    });
   } catch {
     throw new Error("Can't reach the server. Check your connection and try again.");
   }
@@ -95,7 +96,8 @@ export async function fetchGCInfo(
   groupChatId: number
 ): Promise<GroupChat & { error?: string }> {
   const res = await fetch(
-    `${API_BASE}/getGCInfo?groupChatId=${groupChatId}`
+    `${API_BASE}/getGCInfo?groupChatId=${groupChatId}`,
+    { credentials: "include" }
   );
   return res.json();
 }
@@ -253,7 +255,7 @@ export async function logout(): Promise<void> {
 export async function fetchMe(): Promise<AuthUser | null> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/me`);
+    res = await fetch(`${API_BASE}/me`, { credentials: "include" });
   } catch {
     throw new Error("Can't reach the server. Check your connection and try again.");
   }

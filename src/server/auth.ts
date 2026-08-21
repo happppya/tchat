@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
+import { COOKIE_SAME_SITE } from './constants';
 import type { DB } from './db';
 
 /**
@@ -166,14 +167,19 @@ export async function pruneExpiredSessions(): Promise<void> {
 /** Serialize a token into a Set-Cookie header value. */
 export function sessionCookie(
   token: string,
-  options: { maxAgeMs?: number; secure?: boolean } = {}
+  options: {
+    maxAgeMs?: number;
+    secure?: boolean;
+    sameSite?: 'Lax' | 'None';
+  } = {}
 ): string {
   const maxAgeMs = options.maxAgeMs ?? SESSION_TTL_MS;
+  const sameSite = options.sameSite ?? COOKIE_SAME_SITE;
   const attrs = [
     `${SESSION_COOKIE}=${token}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${sameSite}`,
     `Max-Age=${Math.floor(maxAgeMs / 1000)}`,
   ];
   // Only mark Secure when the request actually arrived over HTTPS (directly or
@@ -184,8 +190,16 @@ export function sessionCookie(
 }
 
 /** Build a cookie that immediately expires (clears the browser cookie). */
-export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+export function clearSessionCookie(secure = false): string {
+  const attrs = [
+    `${SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${COOKIE_SAME_SITE}`,
+    'Max-Age=0',
+  ];
+  if (secure) attrs.push('Secure');
+  return attrs.join('; ');
 }
 
 /**
