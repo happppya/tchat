@@ -268,7 +268,7 @@ rl.on('line', async (line) => {
 
   switch (command.toLowerCase()) {
     case 'help':
-      console.log('Available commands: status, users, create, destroy, stop, db, dbclear, gcclear');
+      console.log('Available commands: status, users, create, destroy, stop, db, gcclear');
       break;
     case 'status':
       console.log(`Server status: ONLINE. Connections: ${server.connections ?? 0}`);
