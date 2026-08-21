@@ -16,18 +16,54 @@ export const EMPTY_ROOM_TTL_MS =
 export const CLEANUP_INTERVAL_MS =
   Number(process.env.CLEANUP_INTERVAL_MS) || 5 * 60 * 1000;
 
+/** Split a comma-separated env string into trimmed, normalized origins. */
+function parseOrigins(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .map((origin) => origin.replace(/\/+$/, ''));
+}
+
 /**
- * Origin of the frontend when it is hosted separately (e.g. Appwrite). When
- * set, the server enables CORS for this origin and marks the session cookie
- * SameSite=None so cross-origin requests carry it.
+ * Origins of separately-hosted frontends (e.g. Appwrite deployments). When any
+ * are configured, the server enables CORS for those origins and marks the
+ * session cookie SameSite=None so cross-origin requests carry it.
+ *
+ * Read from FRONTEND_ORIGINS as a comma-separated list; the legacy single-value
+ * FRONTEND_ORIGIN is still accepted as a fallback. A lone `*` entry means
+ * "allow any origin". Empty = same-origin deploy.
  */
-export const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || '').replace(
-  /\/+$/,
-  ''
+export const FRONTEND_ORIGINS = parseOrigins(
+  process.env.FRONTEND_ORIGINS || process.env.FRONTEND_ORIGIN || ''
 );
 
+/** True when `*` is configured: accept requests from any origin. */
+export const ALLOW_ALL_ORIGINS = FRONTEND_ORIGINS.includes('*');
+
 /** Session cookie SameSite policy: cross-site when a separate frontend origin is configured. */
-export const COOKIE_SAME_SITE: 'Lax' | 'None' = FRONTEND_ORIGIN ? 'None' : 'Lax';
+export const COOKIE_SAME_SITE: 'Lax' | 'None' =
+  FRONTEND_ORIGINS.length > 0 ? 'None' : 'Lax';
+
+/** True when `origin` is one of the configured frontend origins (for CORS). */
+export function isConfiguredFrontendOrigin(
+  origin: string | undefined
+): boolean {
+  if (ALLOW_ALL_ORIGINS) return !!origin;
+  return !!origin && FRONTEND_ORIGINS.includes(origin);
+}
+
+/**
+ * Whether a WebSocket handshake may come from `origin`. When no origins are
+ * configured there is no restriction; non-browser clients that send no Origin
+ * header are always allowed.
+ */
+export function isAllowedWsOrigin(origin: string | undefined): boolean {
+  if (ALLOW_ALL_ORIGINS) return true;
+  if (FRONTEND_ORIGINS.length === 0) return true;
+  if (!origin) return true;
+  return FRONTEND_ORIGINS.includes(origin);
+}
 
 // Text messages can carry markdown/code blocks, so allow a roomier body than
 // the old 300-char cap. Files are capped separately to protect the disk.

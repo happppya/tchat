@@ -19,7 +19,9 @@ import {
 } from './src/server/auth';
 import {
   CLEANUP_INTERVAL_MS,
-  FRONTEND_ORIGIN,
+  FRONTEND_ORIGINS,
+  isConfiguredFrontendOrigin,
+  isAllowedWsOrigin,
   PROJECT_ROOT,
 } from './src/server/constants';
 
@@ -30,16 +32,26 @@ const app = express();
 app.set('trust proxy', 1);
 
 // CORS: when the frontend is hosted on a different origin (e.g. Appwrite),
-// allow it to call this API and carry the session cookie. Without
-// FRONTEND_ORIGIN this is a no-op (same-origin deployment).
+// allow it to call this API and carry the session cookie. When no frontend
+// origins are configured this is a no-op (same-origin deployment).
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (!FRONTEND_ORIGIN) return next();
+  if (FRONTEND_ORIGINS.length === 0) return next();
 
-  res.setHeader('Access-Control-Allow-Origin', FRONTEND_ORIGIN);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Vary', 'Origin');
+  const origin = req.headers.origin;
+
+  // Echo back the requesting origin only when it's an allowed frontend, since
+  // Access-Control-Allow-Credentials can't use a wildcard.
+  if (isConfiguredFrontendOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin as string);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
 
   if (req.method === 'OPTIONS') {
+    if (!isConfiguredFrontendOrigin(origin)) {
+      res.status(403).json({ error: 'Origin not allowed' });
+      return;
+    }
     res.setHeader(
       'Access-Control-Allow-Methods',
       'GET,POST,PUT,DELETE,OPTIONS'
@@ -115,13 +127,9 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Reject cross-origin handshakes from unexpected origins when a frontend
-    // origin is configured (browsers always send Origin on WS handshakes).
-    if (
-      FRONTEND_ORIGIN &&
-      request.headers.origin &&
-      request.headers.origin !== FRONTEND_ORIGIN
-    ) {
+    // Reject cross-origin handshakes from unexpected origins when frontend
+    // origins are configured (browsers always send Origin on WS handshakes).
+    if (!isAllowedWsOrigin(request.headers.origin)) {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;

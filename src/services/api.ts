@@ -9,6 +9,12 @@ import type {
 import { API_BASE, MESSAGES_PAGE_SIZE } from "../constants";
 
 /**
+ * Header required by localtunnel to skip its interstitial reminder page.
+ * Sent on every request so tunneled traffic reaches the app directly.
+ */
+const TUNNEL_HEADERS = { "Bypass-Tunnel-Reminder": "true" } as const;
+
+/**
  * Shared JSON request helper: every endpoint parses the JSON body and, on a
  * non-2xx response, throws the server's `error` message (falling back to a
  * generic message). This removes the repeated fetch/parse/throw boilerplate
@@ -20,6 +26,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     res = await fetch(`${API_BASE}${path}`, {
       ...options,
       credentials: "include",
+      headers: {
+        ...TUNNEL_HEADERS,
+        ...(options.headers ?? {}),
+      },
     });
   } catch {
     throw new Error("Can't reach the server. Check your connection and try again.");
@@ -97,7 +107,7 @@ export async function fetchGCInfo(
 ): Promise<GroupChat & { error?: string }> {
   const res = await fetch(
     `${API_BASE}/getGCInfo?groupChatId=${groupChatId}`,
-    { credentials: "include" }
+    { credentials: "include", headers: { ...TUNNEL_HEADERS } }
   );
   return res.json();
 }
@@ -255,7 +265,10 @@ export async function logout(): Promise<void> {
 export async function fetchMe(): Promise<AuthUser | null> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/me`, { credentials: "include" });
+    res = await fetch(`${API_BASE}/me`, {
+      credentials: "include",
+      headers: { ...TUNNEL_HEADERS },
+    });
   } catch {
     throw new Error("Can't reach the server. Check your connection and try again.");
   }

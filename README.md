@@ -69,15 +69,19 @@ npm start       # compile the server (dist-server/) and serve the SPA
 You can host the SPA on Appwrite and the API on Render. Because they are
 different origins, cookies and CORS need explicit configuration.
 
-**Backend (Render)** — set the frontend's origin:
+**Backend (Render)** — set the frontend origin(s):
 
 ```bash
-FRONTEND_ORIGIN=https://<your-app>.appwrite.global
+# One or more comma-separated origins are supported:
+FRONTEND_ORIGINS=https://<your-app>.appwrite.global,https://<staging>.appwrite.global
+# …or allow any origin:
+FRONTEND_ORIGINS=*
 ```
 
-This enables CORS with credentials for that origin and marks the session
-cookie `SameSite=None; Secure` so the Appwrite-hosted SPA can send it
-cross-origin. (Render serves HTTPS, which `Secure` requires.)
+(The legacy single-value `FRONTEND_ORIGIN` still works.) This enables CORS
+with credentials for those origins and marks the session cookie
+`SameSite=None; Secure` so the Appwrite-hosted SPA can send it cross-origin.
+(Render serves HTTPS, which `Secure` requires.)
 
 **Frontend (Appwrite)** — set the API/WebSocket URLs at build time:
 

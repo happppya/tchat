@@ -56,6 +56,15 @@ describe("signup / login envelope handling", () => {
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
   });
 
+  it("sends the localtunnel bypass header on every request", async () => {
+    fetchMock.mockResolvedValue(json({ user: USER }, 201));
+
+    await signup("alice", "password123");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      headers: { "Bypass-Tunnel-Reminder": "true" },
+    });
+  });
+
   it("login returns the user from the envelope", async () => {
     fetchMock.mockResolvedValue(json({ user: USER }));
 
@@ -143,6 +152,15 @@ describe("fetchMe", () => {
 
     await expect(fetchMe()).resolves.toEqual(USER);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/me");
+  });
+
+  it("includes the localtunnel bypass header", async () => {
+    fetchMock.mockResolvedValue(json({ user: USER }));
+
+    await fetchMe();
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      headers: { "Bypass-Tunnel-Reminder": "true" },
+    });
   });
 
   it("throws on a server error", async () => {
