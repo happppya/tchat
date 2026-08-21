@@ -6,3 +6,5 @@ PLEASE BE ADVISED<<< some things are omitted for the sake of security and for ot
 
 #GIFS WONT WORK WITHOUT AN API KEY
 get a giphy api key and inside a folder named .env put in GIPHY_API_KEY="\<insert key\>"
+
+login.html, signup.html, manifest.json, and popup.html are currently just hopes and dreams and aren't part of the site
