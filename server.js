@@ -19,19 +19,23 @@ let db;
 
 app.use(express.json());
 
-app.get('/', (req, res) => {
-  const start = performance.now();
-  res.sendFile(__dirname + '/index.html');
-  const end = performance.now();
-  console.log(`Serving index.html took ${end - start} ms`);
-});
+// Serve static files from the React build (production) or fall back to root files
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'dist')));
 
-app.get('/login', (req, res) => {
-  res.sendFile(__dirname + '/login.html');
-});
+// Also serve root-level legacy HTML files (popup.html for Chrome extension)
+app.use(express.static(__dirname));
 
-app.get('/signup', (req, res) => {
-  res.sendFile(__dirname + '/signup.html');
+// SPA fallback: any non-API, non-static route -> dist/index.html
+app.get(/^(?!\/api\/|\/ws).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'), (err) => {
+    if (err) {
+      // Fall back to old index.html during development
+      res.sendFile(path.join(__dirname, 'index.html'), (err2) => {
+        if (err2) res.status(404).send('Not found');
+      });
+    }
+  });
 });
 
 async function initializeAndStore() {

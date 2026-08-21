@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/* Custom theme colors (dark chat app) */
+:root {
+  --bg-primary: #1e1e24;
+  --bg-secondary: #393946;
+  --bg-tertiary: #606075;
+  --border-primary: #6c6c80;
+  --text-primary: #e3e3ff;
+  --text-secondary: #8e8ea8;
+  --text-muted: #6c6c80;
+  --accent: #8080d6;
+  --accent-light: #9b9bb8;
+  --error: #ef4444;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: "Inter", "Arial", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 3px;
+}
+
+/* Selection color */
+::selection {
+  background-color: #8d8dca;
+  color: #ffffff;
+}
+
+/* Textarea styling for autosize */
+textarea {
+  field-sizing: content;
+  min-height: 40px;
+  max-height: 200px;
+}

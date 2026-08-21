@@ -1,3 +1,5 @@
 .env
+.freebuff/
 node_modules/
 database.db
+dist/

@@ -1,0 +1,79 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+import type { Message, WSMessage } from "../types";
+import { fetchMessages, fetchGCInfo } from "../services/api";
+import { saveGC, getSavedGCs } from "../services/storage";
+
+/**
+ * Manages message loading and real-time updates for the current group chat.
+ */
+export function useMessages(groupChatId: number | null) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [gcName, setGcName] = useState<string>("Group Chat");
+  const [error, setError] = useState<string>("");
+  const loadingRef = useRef(false);
+
+  const loadMessages = useCallback(async (gcId: number) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setError("");
+
+    try {
+      const [msgs, gcInfo] = await Promise.all([
+        fetchMessages(gcId),
+        fetchGCInfo(gcId),
+      ]);
+
+      if ((gcInfo as { error?: string }).error) {
+        setError("Invalid Room!");
+        return;
+      }
+
+      setMessages(msgs.reverse());
+      setGcName(gcInfo.name || "Group Chat");
+
+      // Auto-save to localStorage
+      const saved = getSavedGCs();
+      if (!saved.some((gc) => gc.id === gcId)) {
+        saveGC(gcId, gcInfo.name || "Chat");
+      }
+    } catch {
+      setError("Failed to load messages");
+    } finally {
+      loadingRef.current = false;
+    }
+  }, []);
+
+  // Reload when groupChatId changes
+  useEffect(() => {
+    if (groupChatId) {
+      loadMessages(groupChatId);
+    } else {
+      setMessages([]);
+      setGcName("Group Chat");
+      setError("");
+    }
+  }, [groupChatId, loadMessages]);
+
+  /** Handle an incoming WebSocket message — prepend if it's for this GC */
+  const handleWSMessage = useCallback(
+    (msg: WSMessage) => {
+      if (msg.type !== "message") return;
+      if (msg.groupChatId !== groupChatId) return;
+
+      const newMsg: Message = {
+        id: Date.now(), // temporary; real id comes from DB on reload
+        group_chat_id: msg.groupChatId,
+        display_name: msg.displayNameText ?? null,
+        message_text: msg.messageText ?? null,
+        gif_url: msg.gifUrl ?? null,
+        sent_at: msg.timestamp ?? new Date().toISOString(),
+      };
+
+      setMessages((prev) => [newMsg, ...prev]);
+      setError("");
+    },
+    [groupChatId]
+  );
+
+  return { messages, gcName, error, setGcName, loadMessages, handleWSMessage };
+}
