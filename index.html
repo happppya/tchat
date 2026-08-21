@@ -360,6 +360,11 @@
       height: 100%;
       color: #8e8ea860;
       font-size: 15px;
+      margin-top: 10px;
+    }
+
+    .placeholder-text h2 {
+      margin-top: 100px;
     }
 
     .gc-create-options {
@@ -833,7 +838,7 @@
 
         groupchatInfo = await getGCInfo(groupChatId);
         const savedGCs = getGcList();
-        if (!savedGCs.some(gc => gc.id == groupChatId)) {
+        if (!savedGCs || !savedGCs.some(gc => gc.id == groupChatId)) {
           addGcToStorage(groupChatId, groupchatInfo.name);
           renderGcButton(groupChatId, groupchatInfo.name);
         }
