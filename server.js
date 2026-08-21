@@ -19,6 +19,11 @@ let db;
 
 app.use(express.json());
 
+// Health check endpoint (no DB dependency, for test/CI readiness)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // Serve static files from the React build (production) or fall back to root files
 const path = require('path');
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -39,8 +44,9 @@ app.get(/^(?!\/api\/|\/ws).*/, (req, res) => {
 });
 
 async function initializeAndStore() {
+  const dbPath = process.env.DATABASE_PATH || './database.db';
   db = await open({
-    filename: './database.db',
+    filename: dbPath,
     driver: sqlite3.Database
   });
   console.log('Connected to local SQLite file database!');
@@ -139,8 +145,12 @@ app.get('/api/getMessages', async (req, res) => {
   if (groupChatId && !(await validateGCID(groupChatId))) {
     return res.status(400).json({ error: 'Invalid group chat ID' });
   }
+  // Order newest-first by sent_at, using the autoincrement id as a stable
+  // tiebreaker. sent_at has only second precision, so messages sent within the
+  // same second would otherwise be returned in an arbitrary order — which
+  // scrambles the list once the client reverses it to oldest-first.
   const messages = await db.all(
-    'SELECT * FROM messages WHERE group_chat_id = ? ORDER BY sent_at DESC LIMIT ?',
+    'SELECT * FROM messages WHERE group_chat_id = ? ORDER BY sent_at DESC, id DESC LIMIT ?',
     [parseInt(groupChatId), parseInt(numMessages)]
   );
   const end = performance.now();

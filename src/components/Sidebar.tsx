@@ -64,6 +64,7 @@ export default function Sidebar({ activeGCId, onSelectGC, className }: Props) {
         value={roomCode}
         onChange={(e) => setRoomCode(e.target.value)}
         onKeyDown={handleRoomCode}
+        data-testid="room-code-input"
         className="mx-2 border border-[var(--border-primary)] rounded-lg px-2 py-1.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] text-sm outline-none placeholder:text-gray-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
 
@@ -76,6 +77,7 @@ export default function Sidebar({ activeGCId, onSelectGC, className }: Props) {
                 e.preventDefault();
                 handleRemove(e, gc.id);
               }}
+              data-testid={`gc-button-${gc.id}`}
               className={`w-full text-left px-2.5 py-1.5 my-1 border-none rounded-lg cursor-pointer text-[var(--text-secondary)] text-sm bg-[var(--bg-secondary)] hover:bg-[#595965] transition-colors ${
                 activeGCId === gc.id ? "!bg-[#595965] font-bold" : ""
               }`}

@@ -62,6 +62,7 @@ export default function MessageComposer({ onSend }: Props) {
           maxLength={30}
           value={displayName}
           onChange={(e) => handleDisplayNameChange(e.target.value)}
+          data-testid="display-name-input"
           className="w-28 h-7 box-border text-xs text-[var(--text-secondary)] px-2.5 py-1 border border-[var(--border-primary)] rounded-lg bg-[var(--bg-secondary)] outline-none focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_rgba(121,121,184,0.15)] placeholder:text-[var(--text-secondary)]"
         />
       </div>
@@ -75,6 +76,7 @@ export default function MessageComposer({ onSend }: Props) {
           onKeyDown={handleKeyDown}
           onFocus={clearError}
           placeholder="Message..."
+          data-testid="message-input"
           className="flex-1 min-h-10 max-h-[200px] box-border px-3.5 py-2.5 border border-[var(--border-primary)] rounded-lg text-sm leading-snug bg-[var(--bg-secondary)] text-[var(--text-secondary)] resize-none overflow-y-auto outline-none focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(121,121,184,0.15)] placeholder:text-[var(--text-secondary)]"
         />
 

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import type { Message, GroupChat } from "../types";
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
@@ -17,9 +17,10 @@ export default function ChatWindow({
   error,
   onSendMessage,
 }: Props) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to latest when messages change
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -40,17 +41,21 @@ export default function ChatWindow({
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto flex flex-col-reverse gap-2 py-2">
-        <div ref={messagesEndRef} />
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
+      {/* Messages — oldest at top, newest at bottom */}
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto flex flex-col gap-2 py-2"
+        data-testid="message-list"
+      >
         {messages.length === 0 && !error && (
           <div className="flex-1 flex items-center justify-center text-[var(--text-muted)] opacity-40 text-sm">
             No messages yet. Say something!
           </div>
         )}
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Composer */}

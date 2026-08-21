@@ -12,7 +12,10 @@ export default function MessageBubble({ message }: Props) {
   const time = formatTimestamp(message.sent_at);
 
   return (
-    <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg p-2.5 text-sm leading-relaxed">
+    <div
+      data-testid="message-bubble"
+      className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg p-2.5 text-sm leading-relaxed"
+    >
       <div className="flex items-baseline gap-1.5 flex-wrap">
         <strong className="text-[var(--text-primary)]">{displayName}:</strong>
         <span>{text}</span>

@@ -54,14 +54,16 @@ export function useMessages(groupChatId: number | null) {
     }
   }, [groupChatId, loadMessages]);
 
-  /** Handle an incoming WebSocket message — prepend if it's for this GC */
+  const tempIdRef = useRef(0);
+
+  /** Handle an incoming WebSocket message — append if it's for this GC */
   const handleWSMessage = useCallback(
     (msg: WSMessage) => {
       if (msg.type !== "message") return;
       if (msg.groupChatId !== groupChatId) return;
 
       const newMsg: Message = {
-        id: Date.now(), // temporary; real id comes from DB on reload
+        id: tempIdRef.current--, // stable unique negative ids; DB ids are positive
         group_chat_id: msg.groupChatId,
         display_name: msg.displayNameText ?? null,
         message_text: msg.messageText ?? null,
@@ -69,7 +71,7 @@ export function useMessages(groupChatId: number | null) {
         sent_at: msg.timestamp ?? new Date().toISOString(),
       };
 
-      setMessages((prev) => [newMsg, ...prev]);
+      setMessages((prev) => [...prev, newMsg]);
       setError("");
     },
     [groupChatId]
