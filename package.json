@@ -9,6 +9,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "preview": "vite preview",
     "start": "npm run build:server && node dist-server/server.js",
+    "localserver": "npx ngrok http 3000",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
@@ -29,6 +30,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ngrok": "^5.0.0-beta.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
