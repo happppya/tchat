@@ -52,7 +52,13 @@ export function renderMarkdown(source: string): string {
       return href
         ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
         : text;
-    });
+    })
+    // Room links: [#12345] renders as a clickable room reference.
+    .replace(
+      /\[#(\d{1,6})\]/g,
+      (_match, roomCode: string) =>
+        `<span class="room-link" data-room-id="${roomCode}" title="Join room #${roomCode}">[#${roomCode}]</span>`
+    );
 
   // Restore the code blocks as escaped, monospace blocks.
   codeBlocks.forEach((code, index) => {

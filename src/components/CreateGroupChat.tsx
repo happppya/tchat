@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createGroupChat } from "../services/api";
 import { saveGC } from "../services/storage";
+import { useAuth } from "../hooks/useAuth";
 import { MAX_GC_ID_DIGITS } from "../constants";
 
 interface Props {
@@ -8,14 +9,21 @@ interface Props {
 }
 
 export default function CreateGroupChat({ onCreated }: Props) {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [isPublic, setIsPublic] = useState(false);
+  const [isHidden, setIsHidden] = useState(false);
+  const [password, setPassword] = useState("");
+  const [isReadonly, setIsReadonly] = useState(false);
+  const [isAnonymous, setIsAnonymous] = useState(false);
+  const [isTransparent, setIsTransparent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // Keep only digits and cap the code at the shared max length.
+  // Only admins can create rooms.
+  if (!user?.isAdmin) return null;
+
   const handleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setId(e.target.value.replace(/\D/g, "").slice(0, MAX_GC_ID_DIGITS));
   };
@@ -27,20 +35,47 @@ export default function CreateGroupChat({ onCreated }: Props) {
     setBusy(true);
     setError("");
     try {
-      await createGroupChat(gcId, name.trim(), isPublic);
+      await createGroupChat(gcId, name.trim(), {
+        isHidden,
+        password: isHidden ? password : undefined,
+        isReadonly,
+        isAnonymous,
+        isTransparent,
+      });
       saveGC(gcId, name.trim());
       setId("");
       setName("");
-      setIsPublic(false);
+      setIsHidden(false);
+      setPassword("");
+      setIsReadonly(false);
+      setIsAnonymous(false);
+      setIsTransparent(false);
       setIsOpen(false);
       onCreated(gcId);
     } catch (err) {
-      // Surface the server's message (e.g. "already exists") to the user.
       setError(err instanceof Error ? err.message : "Failed to create group chat");
     } finally {
       setBusy(false);
     }
   };
+
+  const toggle = (
+    label: string,
+    value: boolean,
+    setter: (v: boolean) => void
+  ) => (
+    <button
+      type="button"
+      onClick={() => setter(!value)}
+      className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
+        value
+          ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+          : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="px-3 pt-2">
@@ -74,35 +109,21 @@ export default function CreateGroupChat({ onCreated }: Props) {
             data-testid="create-gc-name"
             className="w-full border border-[var(--border-primary)] px-2 py-1.5 bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
           />
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">
-              visibility
-            </span>
-            <button
-              type="button"
-              onClick={() => setIsPublic(false)}
-              data-testid="visibility-private"
-              className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
-                !isPublic
-                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
-                  : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
-              }`}
-            >
-              private
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsPublic(true)}
-              data-testid="visibility-public"
-              className={`text-xs border px-2 py-1 cursor-pointer transition-colors ${
-                isPublic
-                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
-                  : "border-[var(--border-primary)] text-[var(--text-secondary)] bg-[var(--bg-secondary)]"
-              }`}
-            >
-              public
-            </button>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {toggle("hidden", isHidden, setIsHidden)}
+            {toggle("readonly", isReadonly, setIsReadonly)}
+            {toggle("anonymous", isAnonymous, setIsAnonymous)}
+            {toggle("transparent", isTransparent, setIsTransparent)}
           </div>
+          {isHidden && (
+            <input
+              type="password"
+              placeholder="room password (>8 chars)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full border border-[var(--border-primary)] px-2 py-1.5 bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
+            />
+          )}
           {error && (
             <div
               data-testid="create-gc-error"

@@ -43,6 +43,42 @@ describe("sessionCookie", () => {
   });
 });
 
+describe("partitioned cookies (CHIPS)", () => {
+  it("marks cross-site session cookies as Partitioned over HTTPS", async () => {
+    process.env.FRONTEND_ORIGINS = "https://app.example.com";
+    const { sessionCookie } = await loadAuth();
+
+    const cookie = sessionCookie("token", { secure: true });
+    expect(cookie).toContain("SameSite=None");
+    expect(cookie).toContain("Secure");
+    expect(cookie).toContain("Partitioned");
+  });
+
+  it("never emits Partitioned without Secure (invalid per spec)", async () => {
+    process.env.FRONTEND_ORIGINS = "https://app.example.com";
+    const { sessionCookie } = await loadAuth();
+
+    const cookie = sessionCookie("token", { secure: false });
+    expect(cookie).toContain("SameSite=Lax"); // downgraded
+    expect(cookie).not.toContain("Partitioned");
+  });
+
+  it("omits Partitioned for same-origin deploys", async () => {
+    const { sessionCookie } = await loadAuth();
+
+    const cookie = sessionCookie("token", { secure: true });
+    expect(cookie).toContain("SameSite=Lax");
+    expect(cookie).not.toContain("Partitioned");
+  });
+
+  it("clears cross-site cookies with the same Partitioned attribute", async () => {
+    process.env.FRONTEND_ORIGINS = "https://app.example.com";
+    const { clearSessionCookie } = await loadAuth();
+
+    expect(clearSessionCookie(true)).toContain("Partitioned");
+  });
+});
+
 describe("clearSessionCookie", () => {
   it("clears with the same downgraded SameSite over HTTP", async () => {
     process.env.FRONTEND_ORIGINS = "https://app.example.com";

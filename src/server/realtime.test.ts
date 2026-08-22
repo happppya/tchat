@@ -14,8 +14,8 @@ import type { Session } from "./auth";
  * database; sessions are injected exactly like the HTTP upgrade handler does.
  */
 
-const ALICE: Session = { userId: 1, username: "alice", expires: Date.now() + 60_000 };
-const BOB: Session = { userId: 2, username: "bob", expires: Date.now() + 60_000 };
+const ALICE: Session = { userId: 1, username: "alice", isAdmin: false, expires: Date.now() + 60_000 };
+const BOB: Session = { userId: 2, username: "bob", isAdmin: false, expires: Date.now() + 60_000 };
 
 let db: DB;
 let wss: WebSocketServer;
@@ -85,7 +85,7 @@ function expectClose(ws: WebSocket, ms = 2000): Promise<number> {
 describe("gif url validation", () => {
   beforeEach(async () => {
     await db.run(
-      "INSERT INTO group_chats (id, name, is_public) VALUES (666, 'Gif Room', 0)"
+      "INSERT INTO group_chats (id, name) VALUES (666, 'Gif Room')"
     );
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (1, 666)");
   });
@@ -130,7 +130,7 @@ describe("broadcast scoping + send authorization", () => {
   // Room 555 exists; only alice is a member.
   beforeEach(async () => {
     await db.run(
-      "INSERT INTO group_chats (id, name, is_public) VALUES (555, 'Members Only', 0)"
+      "INSERT INTO group_chats (id, name) VALUES (555, 'Members Only')"
     );
     await db.run(
       "INSERT INTO room_members (user_id, room_id) VALUES (1, 555)"

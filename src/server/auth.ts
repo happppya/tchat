@@ -14,6 +14,7 @@ import type { DB } from './db';
 export interface Session {
   userId: number;
   username: string;
+  isAdmin: boolean;
   expires: number;
 }
 
@@ -126,6 +127,7 @@ export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export async function createSession(user: {
   id: number;
   username: string;
+  isAdmin?: boolean;
 }): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
   const db = getSessionDb();
@@ -149,7 +151,16 @@ async function getSession(token: string | null): Promise<Session | null> {
     await db.run('DELETE FROM sessions WHERE token = ?', [token]);
     return null;
   }
-  return { userId: row.user_id, username: row.username, expires: row.expires_at };
+  const userRow = await db.get(
+    'SELECT is_admin FROM users WHERE id = ?',
+    [row.user_id]
+  );
+  return {
+    userId: row.user_id,
+    username: row.username,
+    isAdmin: !!userRow?.is_admin,
+    expires: row.expires_at,
+  };
 }
 
 /** Delete a session (logout). */
@@ -206,6 +217,11 @@ export function sessionCookie(
   // via a trusted proxy). Forcing it on whenever NODE_ENV=production breaks
   // login/signup on plain-HTTP deploys, because browsers drop Secure cookies.
   if (secure) attrs.push('Secure');
+  // CHIPS: partitioned third-party cookies are accepted even where plain
+  // third-party cookies are blocked (Chrome incognito), which is exactly the
+  // cross-origin frontend setup SameSite=None exists for. Only valid with
+  // Secure; other browsers ignore the attribute.
+  if (sameSite === 'None' && secure) attrs.push('Partitioned');
   return attrs.join('; ');
 }
 
@@ -219,6 +235,7 @@ export function clearSessionCookie(secure = false): string {
     'Max-Age=0',
   ];
   if (secure) attrs.push('Secure');
+  if (COOKIE_SAME_SITE === 'None' && secure) attrs.push('Partitioned');
   return attrs.join('; ');
 }
 

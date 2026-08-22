@@ -10,6 +10,9 @@ interface Props {
   error: string;
   /** Whether the current user created this room and may delete it. */
   isOwner: boolean;
+  /** Whether the viewer is a room owner, mod, or admin. */
+  viewerIsStaff: boolean;
+  viewerIsAdmin: boolean;
   /** True when there are older pages still available on the server. */
   hasMore: boolean;
   /** True while an older page is being fetched. */
@@ -24,6 +27,9 @@ interface Props {
   onLeaveRoom: () => void;
   onViewProfile: (username: string) => void;
   onLoadOlder: () => void;
+  onSlashCommand: (command: string, arg: string) => void;
+  onJoinRoom: (roomCode: number) => void;
+  onModAction: (username: string, action: string) => void;
   /** The logged-in user's id, passed down to gate edit/delete controls. */
   currentUserId: number | null;
   onEditMessage: (messageId: number, text: string) => void;
@@ -36,6 +42,8 @@ export default function ChatWindow({
   gcName,
   error,
   isOwner,
+  viewerIsStaff,
+  viewerIsAdmin,
   hasMore,
   loadingOlder,
   onSendMessage,
@@ -43,6 +51,9 @@ export default function ChatWindow({
   onLeaveRoom,
   onViewProfile,
   onLoadOlder,
+  onSlashCommand,
+  onJoinRoom,
+  onModAction,
   currentUserId,
   onEditMessage,
   onDeleteMessage,
@@ -89,6 +100,16 @@ export default function ChatWindow({
       shouldRestoreScrollRef.current = true;
       scrollAnchorRef.current = el.scrollHeight;
       onLoadOlder();
+    }
+  };
+
+  // Event delegation for room link clicks in the message list.
+  const handleListClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const roomLink = target.closest('[data-room-id]') as HTMLElement | null;
+    if (roomLink) {
+      const roomId = parseInt(roomLink.dataset.roomId ?? '', 10);
+      if (roomId) onJoinRoom(roomId);
     }
   };
 
@@ -151,6 +172,7 @@ export default function ChatWindow({
       <div
         ref={listRef}
         onScroll={handleScroll}
+        onClick={handleListClick}
         className="flex-1 overflow-y-auto flex flex-col gap-1 py-2 px-1"
         data-testid="message-list"
       >
@@ -173,11 +195,14 @@ export default function ChatWindow({
             key={group.key}
             group={group}
             currentUserId={currentUserId}
+            viewerIsStaff={viewerIsStaff}
+            viewerIsAdmin={viewerIsAdmin}
             onViewProfile={onViewProfile}
             onEditMessage={onEditMessage}
             onDeleteMessage={onDeleteMessage}
             onReply={handleReply}
             onToggleReaction={onToggleReaction}
+            onModAction={onModAction}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -188,6 +213,7 @@ export default function ChatWindow({
         onSend={handleComposerSend}
         replyTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
+        onSlashCommand={onSlashCommand}
       />
     </div>
   );

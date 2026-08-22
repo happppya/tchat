@@ -28,6 +28,14 @@ import {
   removeRoomMember,
   getUserRooms,
   isRoomMember,
+  isSiteAdmin,
+  isRoomOwner,
+  isRoomStaffOrAdmin,
+  isRoomBanned,
+  isRoomMuted,
+  isRoomMod,
+  roomIsAnonymous,
+  getAnonName,
   createGroupChat,
   destroyGroupChat,
   validateGCID,
@@ -45,14 +53,14 @@ const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 128;
 
 /**
- * Parse + validate a room code (1–6 digits, positive). Returns the numeric id
+ * Parse + validate a room code (0–6 digits, non-negative). Returns the numeric id
  * or null. Shared by every room-code endpoint so the rules stay in one place.
  */
 function parseRoomCode(value: unknown): number | null {
   const idStr = String(value ?? '').trim();
   if (!/^\d{1,6}$/.test(idStr)) return null;
   const id = parseInt(idStr, 10);
-  return id > 0 ? id : null;
+  return id >= 0 ? id : null;
 }
 
 /** Parse + validate a positive integer message id. Returns null when invalid. */
@@ -68,9 +76,11 @@ function parseMessageId(value: unknown): number | null {
 export function createRouter({
   db,
   broadcast,
+  sendToUser,
 }: {
   db: DB;
   broadcast: (payload: unknown, groupChatId?: number | null) => void;
+  sendToUser: (userId: number, payload: unknown) => void;
 }): Router {
   const router = express.Router();
 
@@ -106,16 +116,22 @@ export function createRouter({
         hash,
       ]);
       const user = await db.get(
-        'SELECT id, username, bio, picture_url FROM users WHERE username = ?',
+        'SELECT id, username, is_admin, bio, picture_url FROM users WHERE username = ?',
         [cleanUser]
       );
       if (!user) {
         throw new Error('Inserted user not found on read-back');
       }
-      const token = await createSession(user);
+      const token = await createSession({ ...user, isAdmin: !!user.is_admin });
       res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
+
+      // Every new user starts in Room 0.
+      await addRoomMember(db, user.id, 0);
+
       console.log(`[auth] signup ok: ${user.username} (id ${user.id})`);
-      res.status(201).json({ user });
+      res.status(201).json({
+        user: { ...user, isAdmin: !!user.is_admin },
+      });
     } catch (err) {
       if (err && /UNIQUE/i.test(String((err as Error).message))) {
         return res.status(409).json({ error: 'Username already taken' });
@@ -138,7 +154,7 @@ export function createRouter({
 
     try {
       const user = await db.get(
-        'SELECT id, username, password_hash, bio, picture_url FROM users WHERE username = ?',
+        'SELECT id, username, password_hash, is_admin, bio, picture_url FROM users WHERE username = ?',
         [cleanUser]
       );
 
@@ -156,13 +172,18 @@ export function createRouter({
         return res.status(401).json({ error: 'Invalid username or password' });
       }
 
-      const token = await createSession(user);
+      const token = await createSession({ ...user, isAdmin: !!user.is_admin });
       res.setHeader('Set-Cookie', sessionCookie(token, { secure: req.secure }));
+
+      // Ensure the user is in Room 0 (lobby). Idempotent.
+      await addRoomMember(db, user.id, 0);
+
       console.log(`[auth] login ok: ${user.username} (id ${user.id})`);
       res.json({
         user: {
           id: user.id,
           username: user.username,
+          isAdmin: !!user.is_admin,
           bio: user.bio,
           picture_url: user.picture_url,
         },
@@ -185,11 +206,13 @@ export function createRouter({
     const session = await readSession(req);
     if (!session) return res.status(401).json({ error: 'Not authenticated' });
     const user = await db.get(
-      'SELECT id, username, bio, picture_url FROM users WHERE id = ?',
+      'SELECT id, username, is_admin, bio, picture_url FROM users WHERE id = ?',
       [session.userId]
     );
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
-    res.json({ user });
+    res.json({
+      user: { ...user, isAdmin: !!user.is_admin },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -247,18 +270,39 @@ export function createRouter({
   // -------------------------------------------------------------------------
 
   router.post('/createGC', requireAuth, async (req: Request, res: Response) => {
-    const { id, name, isPublic } = req.body || {};
+    // Only site admins may create rooms.
+    const admin = await isSiteAdmin(db, req.session!.userId);
+    if (!admin) {
+      return res.status(403).json({ error: 'Only admins can create rooms' });
+    }
+
+    const { id, name, isHidden, password, isReadonly, isAnonymous, isTransparent } =
+      req.body || {};
     const cleanName = typeof name === 'string' ? name.trim() : '';
-    const publicFlag = isPublic === true ? 1 : 0;
     const gcId = parseRoomCode(id);
 
-    if (!gcId) {
+    if (gcId === null) {
       return res
         .status(400)
         .json({ error: `Room code must be 1–${MAX_GC_ID_DIGITS} digits` });
     }
+    if (gcId === 0) {
+      return res.status(400).json({ error: 'Room 0 is reserved' });
+    }
     if (!cleanName) {
       return res.status(400).json({ error: 'Room name is required' });
+    }
+
+    // Hidden rooms need a password (>8 chars). Hash and store it.
+    let passwordHash: string | null = null;
+    if (isHidden) {
+      const pass = typeof password === 'string' ? password : '';
+      if (pass.length < 9) {
+        return res
+          .status(400)
+          .json({ error: 'Hidden rooms require a password (>8 characters)' });
+      }
+      passwordHash = await hashPassword(pass);
     }
 
     try {
@@ -271,7 +315,17 @@ export function createRouter({
           .json({ error: 'A room with this code already exists' });
       }
 
-      await createGroupChat(db, gcId, cleanName, req.session!.userId, publicFlag);
+      await createGroupChat(
+        db,
+        gcId,
+        cleanName,
+        req.session!.userId,
+        isHidden ? 1 : 0,
+        passwordHash,
+        isReadonly ? 1 : 0,
+        isAnonymous ? 1 : 0,
+        isTransparent ? 1 : 0
+      );
       await addRoomMember(db, req.session!.userId, gcId);
       res.status(201).json({ message: 'Group chat created successfully' });
     } catch (err) {
@@ -297,8 +351,9 @@ export function createRouter({
       return res.status(400).json({ error: 'Invalid group chat ID' });
     }
     // Room contents are for members only — knowing the numeric code is not
-    // enough to read a room you haven't joined.
-    if (!(await isRoomMember(db, req.session!.userId, gcId))) {
+    // enough to read a room you haven't joined. Room 0 (lobby) is the
+    // exception: any authenticated user can see it.
+    if (gcId !== 0 && !(await isRoomMember(db, req.session!.userId, gcId))) {
       return res
         .status(403)
         .json({ error: 'You are not a member of this room' });
@@ -307,17 +362,31 @@ export function createRouter({
     const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [
       gcId,
     ]);
+    // Strip the password hash from non-admin responses.
+    const isAdmin = await isSiteAdmin(db, req.session!.userId);
+    const isStaff = await isRoomStaffOrAdmin(db, req.session!.userId, gcId);
+    if (!isAdmin && groupChat) {
+      delete (groupChat as Record<string, unknown>).password_hash;
+    }
+    const result = { ...groupChat, viewer_is_staff: isStaff };
     const end = performance.now();
     console.log(`getGCInfo took ${end - start} ms`);
-    res.json(groupChat);
+    res.json(result);
   });
 
   router.delete('/deleteGC', requireAuth, async (req: Request, res: Response) => {
     const { groupChatId } = req.body || {};
     const gcId = parseRoomCode(groupChatId);
 
-    if (!gcId) {
+    if (gcId === null) {
       return res.status(400).json({ error: 'Invalid room code' });
+    }
+    if (gcId === 0) {
+      // Only site admins may delete Room 0.
+      const isAdmin = await isSiteAdmin(db, req.session!.userId);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Room 0 cannot be deleted' });
+      }
     }
 
     const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [
@@ -326,22 +395,25 @@ export function createRouter({
     if (!groupChat) {
       return res.status(404).json({ error: 'Room not found' });
     }
-    if (groupChat.owner_user_id !== req.session!.userId) {
+    // Admins or the room owner can delete the room.
+    const isAdmin = await isSiteAdmin(db, req.session!.userId);
+    if (!isAdmin && groupChat.owner_user_id !== req.session!.userId) {
       return res
         .status(403)
-        .json({ error: 'Only the room owner can delete this room' });
+        .json({ error: 'Only the room owner or an admin can delete this room' });
     }
 
     await destroyGroupChat(db, gcId);
+    // Tell every connected client this room is gone so they can clean up.
+    broadcast({ type: 'deleteRoom', groupChatId: gcId });
     res.json({ message: 'Room deleted' });
   });
 
-  // Discoverable rooms: only public rooms are listed here, so private rooms
-  // stay reachable solely by their numeric code.
+  // Room directory: every non-hidden room. Hidden rooms stay code-access-only.
   router.get('/publicRooms', requireAuth, async (_req: Request, res: Response) => {
     try {
       const rooms = await db.all(
-        'SELECT id, name, is_public FROM group_chats WHERE is_public = 1 ORDER BY id'
+        'SELECT id, name, is_hidden, is_readonly, is_anonymous, is_transparent FROM group_chats WHERE is_hidden = 0 ORDER BY id'
       );
       res.json(rooms);
     } catch (err) {
@@ -361,26 +433,58 @@ export function createRouter({
   });
 
   router.post('/joinRoom', requireAuth, async (req: Request, res: Response) => {
-    const { groupChatId } = req.body || {};
+    const { groupChatId, password } = req.body || {};
     const gcId = parseRoomCode(groupChatId);
 
-    if (!gcId) {
+    if (gcId === null) {
       return res.status(400).json({ error: 'Invalid room code' });
     }
-    if (!(await validateGCID(db, gcId))) {
+
+    const groupChat = await db.get(
+      'SELECT * FROM group_chats WHERE id = ?',
+      [gcId]
+    );
+    if (!groupChat) {
       return res.status(404).json({ error: 'Room not found' });
     }
 
+    // Site admins bypass ban and password checks.
+    const isAdmin = await isSiteAdmin(db, req.session!.userId);
+
+    // Ban check (admins immune).
+    if (!isAdmin && (await isRoomBanned(db, req.session!.userId, gcId))) {
+      return res.status(403).json({ error: 'You are banned from this room' });
+    }
+
+    // Hidden rooms require the password.
+    if (groupChat.is_hidden && groupChat.password_hash && !isAdmin) {
+      const pass = typeof password === 'string' ? password : '';
+      const ok = await verifyPassword(pass, groupChat.password_hash);
+      if (!ok) {
+        return res.status(403).json({ error: 'Invalid room password' });
+      }
+    }
+
     await addRoomMember(db, req.session!.userId, gcId);
-    res.json({ message: 'Joined room' });
+
+    // Anonymous rooms: assign a stable per-user-per-room name.
+    let anonName: string | null = null;
+    if (groupChat.is_anonymous && !isAdmin) {
+      anonName = await getAnonName(db, req.session!.userId, gcId);
+    }
+
+    res.json({ message: 'Joined room', anonName });
   });
 
   router.post('/leaveRoom', requireAuth, async (req: Request, res: Response) => {
     const { groupChatId } = req.body || {};
     const gcId = parseRoomCode(groupChatId);
 
-    if (!gcId) {
+    if (gcId === null) {
       return res.status(400).json({ error: 'Invalid room code' });
+    }
+    if (gcId === 0) {
+      return res.status(403).json({ error: 'Cannot leave Room 0 (the lobby)' });
     }
     if (!(await validateGCID(db, gcId))) {
       return res.status(404).json({ error: 'Room not found' });
@@ -410,9 +514,11 @@ export function createRouter({
     if (groupChatId && !(await validateGCID(db, gcId))) {
       return res.status(400).json({ error: 'Invalid group chat ID' });
     }
-    // Same membership rule as getGCInfo: history is members-only.
+    // Same membership rule as getGCInfo: history is members-only, except
+    // Room 0 which is public to any authenticated user.
     if (
       groupChatId &&
+      gcId !== 0 &&
       !(await isRoomMember(db, req.session!.userId, gcId))
     ) {
       return res
@@ -448,6 +554,35 @@ export function createRouter({
     console.log(`getMessages took ${end - start} ms`);
 
     await attachReactions(db, messages, req.session!.userId);
+
+    // In anonymous rooms, strip user_id from messages for non-admin clients.
+    // Admins get the real username for each message so mod actions work.
+    const anon = groupChatId ? await roomIsAnonymous(db, gcId) : false;
+    const viewerIsAdmin = groupChatId
+      ? await isSiteAdmin(db, req.session!.userId)
+      : false;
+    if (anon) {
+      if (viewerIsAdmin) {
+        // Join real usernames onto each message for admin mod actions.
+        const userIds = [...new Set(messages.map((m) => m.user_id).filter(Boolean))];
+        if (userIds.length > 0) {
+          const placeholders = userIds.map(() => '?').join(',');
+          const users = await db.all(
+            `SELECT id, username FROM users WHERE id IN (${placeholders})`,
+            userIds
+          );
+          const map = new Map(users.map((u) => [u.id, u.username]));
+          for (const m of messages) {
+            m.username = m.user_id ? (map.get(m.user_id) ?? null) : null;
+          }
+        }
+      } else {
+        for (const m of messages) {
+          m.user_id = null;
+        }
+      }
+    }
+
     res.json(messages);
   });
 
@@ -470,9 +605,12 @@ export function createRouter({
       return res.status(404).json({ error: 'Message not found' });
     }
     if (existing.user_id !== req.session!.userId) {
-      return res
-        .status(403)
-        .json({ error: 'You can only edit your own messages' });
+      // Admins can edit any message.
+      if (!(await isSiteAdmin(db, req.session!.userId))) {
+        return res
+          .status(403)
+          .json({ error: 'You can only edit your own messages' });
+      }
     }
     if (!cleanText && !existing.gif_url && !existing.file_url) {
       return res.status(400).json({ error: 'Message is empty' });
@@ -512,9 +650,12 @@ export function createRouter({
       return res.status(404).json({ error: 'Message not found' });
     }
     if (existing.user_id !== req.session!.userId) {
-      return res
-        .status(403)
-        .json({ error: 'You can only delete your own messages' });
+      // Admins can delete any message, including from other admins.
+      if (!(await isSiteAdmin(db, req.session!.userId))) {
+        return res
+          .status(403)
+          .json({ error: 'You can only delete your own messages' });
+      }
     }
 
     await db.run('DELETE FROM messages WHERE id = ?', [id]);
@@ -582,6 +723,139 @@ export function createRouter({
       existing.group_chat_id
     );
     res.json({ reactions });
+  });
+
+  // -------------------------------------------------------------------------
+  // Room commands (slash-command endpoint)
+  // -------------------------------------------------------------------------
+
+  router.post('/roomCommand', requireAuth, async (req: Request, res: Response) => {
+    const { groupChatId, command, targetUsername } = req.body || {};
+    const gcId = parseRoomCode(groupChatId);
+    const cmd = typeof command === 'string' ? command.trim().toLowerCase() : '';
+    const target = typeof targetUsername === 'string' ? targetUsername.trim() : '';
+
+    if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
+    if (gcId === 0) return res.status(403).json({ error: 'Moderation commands are disabled in Room 0' });
+    if (!cmd) return res.status(400).json({ error: 'Command is required' });
+
+    const actorId = req.session!.userId;
+    const isAdmin = await isSiteAdmin(db, actorId);
+    const isStaff = await isRoomStaffOrAdmin(db, actorId, gcId);
+
+    // Resolve the target user by username.
+    let targetId: number | null = null;
+    if (target) {
+      const targetRow = await db.get(
+        'SELECT id, is_admin FROM users WHERE username = ?',
+        [target]
+      );
+      if (!targetRow) {
+        return res.status(404).json({ error: `User "${target}" not found` });
+      }
+      // No one can act on an admin.
+      if (targetRow.is_admin && !isAdmin) {
+        return res
+          .status(403)
+          .json({ error: 'Cannot act on a site admin' });
+      }
+      targetId = targetRow.id;
+    }
+
+    if (
+      ['kick', 'ban', 'unban', 'mute', 'unmute'].includes(cmd) &&
+      !isStaff
+    ) {
+      return res
+        .status(403)
+        .json({ error: 'Only room staff or admins can use this command' });
+    }
+
+    if (['mod', 'demod'].includes(cmd)) {
+      // Room owners and admins can promote/demote moderators.
+      if (!isAdmin && !(await isRoomOwner(db, actorId, gcId))) {
+        return res
+          .status(403)
+          .json({ error: 'Only room owners or admins can manage moderators' });
+      }
+    }
+
+    if (!targetId) {
+      return res.status(400).json({ error: 'A target user is required' });
+    }
+
+    switch (cmd) {
+      case 'kick': {
+        await removeRoomMember(db, targetId, gcId);
+        sendToUser(targetId, {
+          type: 'kicked',
+          groupChatId: gcId,
+          message: `You were kicked from this room.`,
+        });
+        res.json({ message: `Kicked ${target}` });
+        break;
+      }
+      case 'ban': {
+        await db.run(
+          'INSERT OR REPLACE INTO room_bans (room_id, user_id, banned_by, banned_at) VALUES (?, ?, ?, ?)',
+          [gcId, targetId, actorId, sqliteNow()]
+        );
+        await removeRoomMember(db, targetId, gcId);
+        sendToUser(targetId, {
+          type: 'banned',
+          groupChatId: gcId,
+          message: `You were banned from this room.`,
+        });
+        res.json({ message: `Banned ${target}` });
+        break;
+      }
+      case 'unban': {
+        await db.run(
+          'DELETE FROM room_bans WHERE room_id = ? AND user_id = ?',
+          [gcId, targetId]
+        );
+        res.json({ message: `Unbanned ${target}` });
+        break;
+      }
+      case 'mute':
+      case 'unmute': {
+        const muted = await isRoomMuted(db, targetId, gcId);
+        if (muted) {
+          await db.run(
+            'DELETE FROM room_mutes WHERE room_id = ? AND user_id = ?',
+            [gcId, targetId]
+          );
+          res.json({ message: `Unmuted ${target}` });
+        } else {
+          await db.run(
+            'INSERT OR REPLACE INTO room_mutes (room_id, user_id, muted_by, muted_at) VALUES (?, ?, ?, ?)',
+            [gcId, targetId, actorId, sqliteNow()]
+          );
+          res.json({ message: `Muted ${target}` });
+        }
+        break;
+      }
+      case 'mod':
+      case 'demod': {
+        const mod = await isRoomMod(db, targetId, gcId);
+        if (mod) {
+          await db.run(
+            'DELETE FROM room_moderators WHERE room_id = ? AND user_id = ?',
+            [gcId, targetId]
+          );
+          res.json({ message: `Demoted ${target} from moderator` });
+        } else {
+          await db.run(
+            'INSERT OR REPLACE INTO room_moderators (room_id, user_id, elevated_by, elevated_at) VALUES (?, ?, ?, ?)',
+            [gcId, targetId, actorId, sqliteNow()]
+          );
+          res.json({ message: `Promoted ${target} to moderator` });
+        }
+        break;
+      }
+      default:
+        return res.status(400).json({ error: `Unknown command: ${cmd}` });
+    }
   });
 
   // -------------------------------------------------------------------------

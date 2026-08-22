@@ -104,11 +104,11 @@ async function main(): Promise<void> {
 
   // Real-time layer: one WebSocket server + broadcast shared by routes and the
   // message handler. The db powers member-scoped broadcasts.
-  const { wss, broadcast } = createRealtime({ db });
+  const { wss, broadcast, sendToUser } = createRealtime({ db });
   attachMessageHandler({ wss, db, broadcast });
 
   // API routes are mounted after the DB is ready.
-  app.use('/api', createRouter({ db, broadcast }));
+  app.use('/api', createRouter({ db, broadcast, sendToUser }));
 
   // Catch any error that escapes a route and respond with JSON (plus a server
   // log) instead of Express's default HTML page, so the client can surface a

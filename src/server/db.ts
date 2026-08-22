@@ -85,8 +85,18 @@ export async function runMigrations(db: DB): Promise<void> {
   await ensureRoomMembersTable(db);
   await ensureGroupChatsEmptiedAtColumn(db);
 
-  // Public rooms are discoverable in the rooms tab; private rooms are not.
-  await ensureGroupChatsVisibilityColumn(db);
+  // Room-type flags: Hidden (password-gated), Readonly (admin-only speak),
+  // Anonymous (random display names, no profiles), Transparent (default).
+  await ensureGroupChatsTypeColumns(db);
+
+  // Role tables: site admins, room moderators, bans, mutes.
+  await ensureUsersAdminColumn(db);
+  await ensureRoomModeratorsTable(db);
+  await ensureRoomBansTable(db);
+  await ensureRoomMutesTable(db);
+
+  // Stable anonymous display names per user per room.
+  await ensureRoomAnonNamesTable(db);
 
   // Profile fields on users and per-message avatars (denormalized at send
   // time, so old messages keep the avatar the author had then).
@@ -106,6 +116,9 @@ export async function runMigrations(db: DB): Promise<void> {
   // Replies quote a message; reactions live in a small per-message join table.
   await ensureMessagesReplyColumns(db);
   await ensureMessageReactionsTable(db);
+
+  // Seed Room 0 (the directory lobby) during migration so it's always present.
+  await seedRoomZero(db);
 }
 
 /**
@@ -187,19 +200,129 @@ async function ensureGroupChatsEmptiedAtColumn(db: DB): Promise<void> {
   }
 }
 
-/** is_public marks a room as discoverable in the rooms tab. */
-async function ensureGroupChatsVisibilityColumn(db: DB): Promise<void> {
+/** Room type flags: non-exclusive, all default to off (0). */
+async function ensureGroupChatsTypeColumns(db: DB): Promise<void> {
   try {
     const cols = await db.all('PRAGMA table_info(group_chats)');
-    if (!cols.some((c) => c.name === 'is_public')) {
-      await db.exec(
-        'ALTER TABLE group_chats ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0'
-      );
-      console.log('group_chats table migrated: added is_public');
+    const names = cols.map((c) => c.name);
+    for (const [col, label] of [
+      ['is_hidden', 'is_hidden'],
+      ['password_hash', 'password_hash'],
+      ['is_readonly', 'is_readonly'],
+      ['is_anonymous', 'is_anonymous'],
+      ['is_transparent', 'is_transparent'],
+    ] as const) {
+      if (!names.includes(col)) {
+        const def = col === 'password_hash' ? 'TEXT' : 'INTEGER NOT NULL DEFAULT 0';
+        await db.exec(`ALTER TABLE group_chats ADD COLUMN ${col} ${def}`);
+        console.log(`group_chats table migrated: added ${label}`);
+      }
     }
   } catch (err) {
-    console.error('group_chats is_public migration failed:', (err as Error).message);
+    console.error('group_chats type columns migration failed:', (err as Error).message);
   }
+}
+
+/** is_admin flag on users: manually elevated site-wide admins. */
+async function ensureUsersAdminColumn(db: DB): Promise<void> {
+  try {
+    const cols = await db.all('PRAGMA table_info(users)');
+    if (!cols.some((c) => c.name === 'is_admin')) {
+      await db.exec(
+        'ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0'
+      );
+      console.log('users table migrated: added is_admin');
+    }
+  } catch (err) {
+    console.error('users is_admin migration failed:', (err as Error).message);
+  }
+}
+
+/** Room moderators: (room_id, user_id). Elevated by owner or admin. */
+async function ensureRoomModeratorsTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS room_moderators (
+        room_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        elevated_by INTEGER NOT NULL,
+        elevated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (room_id, user_id)
+      );
+    `);
+  } catch (err) {
+    console.error('room_moderators migration failed:', (err as Error).message);
+  }
+}
+
+/** Room bans: (room_id, user_id) with an expiry (null = permanent). */
+async function ensureRoomBansTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS room_bans (
+        room_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        banned_by INTEGER NOT NULL,
+        banned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP WITH TIME ZONE,
+        PRIMARY KEY (room_id, user_id)
+      );
+    `);
+  } catch (err) {
+    console.error('room_bans migration failed:', (err as Error).message);
+  }
+}
+
+/** Room mutes: (room_id, user_id). Muted users cannot send messages. */
+async function ensureRoomMutesTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS room_mutes (
+        room_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        muted_by INTEGER NOT NULL,
+        muted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (room_id, user_id)
+      );
+    `);
+  } catch (err) {
+    console.error('room_mutes migration failed:', (err as Error).message);
+  }
+}
+
+/** Stable anonymous display names: one per (room, user) pair. */
+async function ensureRoomAnonNamesTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS room_anon_names (
+        room_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        anon_name TEXT NOT NULL,
+        PRIMARY KEY (room_id, user_id)
+      );
+    `);
+  } catch (err) {
+    console.error('room_anon_names migration failed:', (err as Error).message);
+  }
+}
+
+/** Get or create a stable anon name for a user in a room. */
+export async function getAnonName(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<string> {
+  const row = await db.get(
+    'SELECT anon_name FROM room_anon_names WHERE room_id = ? AND user_id = ?',
+    [roomId, userId]
+  );
+  if (row) return row.anon_name;
+  const name = randomAnonName();
+  await db.run(
+    'INSERT INTO room_anon_names (room_id, user_id, anon_name) VALUES (?, ?, ?)',
+    [roomId, userId, name]
+  );
+  return name;
 }
 
 /** User profile fields. */
@@ -413,9 +536,9 @@ export async function isRoomMember(
 export async function getUserRooms(
   db: DB,
   userId: number
-): Promise<Array<{ id: number; name: string; is_public: number }>> {
+): Promise<Array<{ id: number; name: string; is_hidden: number; is_readonly: number; is_anonymous: number; is_transparent: number }>> {
   return db.all(
-    `SELECT g.id, g.name, g.is_public
+    `SELECT g.id, g.name, g.is_hidden, g.is_readonly, g.is_anonymous, g.is_transparent
      FROM group_chats g
      JOIN room_members m ON m.room_id = g.id
      WHERE m.user_id = ?
@@ -481,16 +604,42 @@ export async function createGroupChat(
   gc_id: number,
   gc_name: string,
   owner_user_id: number | null = null,
-  is_public: number | boolean = 0
+  is_hidden: number | boolean = 0,
+  password_hash: string | null = null,
+  is_readonly: number | boolean = 0,
+  is_anonymous: number | boolean = 0,
+  is_transparent: number | boolean = 0
 ): Promise<void> {
-  const query = `INSERT INTO group_chats (id, name, owner_user_id, is_public) VALUES (?, ?, ?, ?)`;
-  await db.run(query, [gc_id, gc_name, owner_user_id, is_public ? 1 : 0]);
+  await db.run(
+    `INSERT INTO group_chats (id, name, owner_user_id,
+      is_hidden, password_hash, is_readonly, is_anonymous, is_transparent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      gc_id,
+      gc_name,
+      owner_user_id,
+      is_hidden ? 1 : 0,
+      password_hash ?? null,
+      is_readonly ? 1 : 0,
+      is_anonymous ? 1 : 0,
+      is_transparent ? 1 : 0,
+    ]
+  );
+  const flags: string[] = [];
+  if (is_hidden) flags.push('hidden');
+  if (is_readonly) flags.push('readonly');
+  if (is_anonymous) flags.push('anonymous');
+  if (is_transparent) flags.push('transparent');
   console.log(
-    `GC created: ${gc_name} (ID: ${gc_id}) ${is_public ? '(public)' : '(private)'}`
+    `GC created: ${gc_name} (ID: ${gc_id}) [${flags.join(', ') || 'none'}]`
   );
 }
 
 export async function destroyGroupChat(db: DB, gc_id: number): Promise<void> {
+  if (gc_id === 0) {
+    console.log('Room 0 cannot be deleted');
+    return;
+  }
   // Reactions have no FK cascade, so clear them before the messages vanish.
   await db.run(
     'DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE group_chat_id = ?)',
@@ -498,22 +647,157 @@ export async function destroyGroupChat(db: DB, gc_id: number): Promise<void> {
   );
   await db.run('DELETE FROM messages WHERE group_chat_id = ?', [gc_id]);
   await db.run('DELETE FROM room_members WHERE room_id = ?', [gc_id]);
+  await db.run('DELETE FROM room_moderators WHERE room_id = ?', [gc_id]);
+  await db.run('DELETE FROM room_bans WHERE room_id = ?', [gc_id]);
+  await db.run('DELETE FROM room_mutes WHERE room_id = ?', [gc_id]);
+  await db.run('DELETE FROM room_anon_names WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM group_chats WHERE id = ?', [gc_id]);
   console.log(`GC destroyed: (ID: ${gc_id})`);
 }
 
 export async function clearAllGroupChats(db: DB): Promise<void> {
-  await db.run(`DELETE FROM group_chats`);
+  await db.run(`DELETE FROM room_moderators`);
+  await db.run(`DELETE FROM room_bans`);
+  await db.run(`DELETE FROM room_mutes`);
+  await db.run(`DELETE FROM room_anon_names`);
+  await db.run(`DELETE FROM message_reactions`);
   await db.run(`DELETE FROM messages`);
   await db.run(`DELETE FROM room_members`);
-  await db.run(`DELETE FROM message_reactions`);
-  console.log(`All GCs destroyed`);
+  await db.run(`DELETE FROM group_chats WHERE id != 0`);
+  console.log(`All GCs destroyed (Room 0 preserved)`);
 }
 
 export async function validateGCID(db: DB, gc_id: number): Promise<boolean> {
   const query = `SELECT * FROM group_chats WHERE id = ?`;
   const result = await db.get(query, [gc_id]);
   return result !== undefined;
+}
+
+// --------------------------------------------------------------------------
+// Role helpers — site admins, room owners, moderators, bans, mutes
+// --------------------------------------------------------------------------
+
+/** True when userId is a site admin. */
+export async function isSiteAdmin(db: DB, userId: number): Promise<boolean> {
+  const row = await db.get(
+    'SELECT 1 AS present FROM users WHERE id = ? AND is_admin = 1',
+    [userId]
+  );
+  return row !== undefined;
+}
+
+/** True when userId owns this room. */
+export async function isRoomOwner(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT 1 AS present FROM group_chats WHERE id = ? AND owner_user_id = ?',
+    [roomId, userId]
+  );
+  return row !== undefined;
+}
+
+/** True when userId is an owner, mod, or site admin. */
+export async function isRoomStaffOrAdmin(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  if (await isSiteAdmin(db, userId)) return true;
+  if (await isRoomOwner(db, userId, roomId)) return true;
+  const row = await db.get(
+    'SELECT 1 AS present FROM room_moderators WHERE room_id = ? AND user_id = ?',
+    [roomId, userId]
+  );
+  return row !== undefined;
+}
+
+/** True when userId is a moderator of this room specifically. */
+export async function isRoomMod(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT 1 AS present FROM room_moderators WHERE room_id = ? AND user_id = ?',
+    [roomId, userId]
+  );
+  return row !== undefined;
+}
+
+/** True when userId is banned in this room (active ban, not expired). */
+export async function isRoomBanned(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    `SELECT 1 AS present FROM room_bans
+     WHERE room_id = ? AND user_id = ?
+       AND (expires_at IS NULL OR expires_at > ?)`,
+    [roomId, userId, sqliteNow()]
+  );
+  return row !== undefined;
+}
+
+/** True when userId is muted in this room. */
+export async function isRoomMuted(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT 1 AS present FROM room_mutes WHERE room_id = ? AND user_id = ?',
+    [roomId, userId]
+  );
+  return row !== undefined;
+}
+
+/** Whether the room is flagged as readonly. */
+export async function roomIsReadonly(
+  db: DB,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT is_readonly FROM group_chats WHERE id = ?',
+    [roomId]
+  );
+  return row ? !!row.is_readonly : false;
+}
+
+/** Whether the room is flagged as anonymous. */
+export async function roomIsAnonymous(
+  db: DB,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT is_anonymous FROM group_chats WHERE id = ?',
+    [roomId]
+  );
+  return row ? !!row.is_anonymous : false;
+}
+
+/** Generate a short random display name for anonymous rooms. */
+export function randomAnonName(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let suffix = '';
+  for (let i = 0; i < 4; i++) {
+    suffix += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `Guest_${suffix}`;
+}
+
+/** Seed Room 0 (directory lobby) if it doesn't exist. Cannot be deleted. */
+export async function seedRoomZero(db: DB): Promise<void> {
+  const row = await db.get('SELECT id FROM group_chats WHERE id = 0');
+  if (row) return;
+  // Room 0 has no owner — it's the system room.
+  await db.run(
+    "INSERT INTO group_chats (id, name, is_transparent) VALUES (0, 'Lobby', 1)"
+  );
+  console.log('Room 0 seeded');
 }
 
 export interface Reaction {

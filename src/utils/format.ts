@@ -49,6 +49,8 @@ export interface MessageGroup {
   /** Stable key for the group — author + first message id. */
   key: string;
   displayName: string;
+  /** Real username (may differ from displayName in anonymous rooms). */
+  username: string | null;
   /** Author avatar captured on the first message of the group. */
   avatarUrl: string | null;
   /** The first timestamp in the group (for the header). */
@@ -78,6 +80,7 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
       groups.push({
         key: `${author}-${msg.id}`,
         displayName: author,
+        username: msg.username ?? null,
         avatarUrl: msg.avatar_url ?? null,
         firstSentAt: msg.sent_at,
         messages: [msg],

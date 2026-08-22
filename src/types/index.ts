@@ -3,6 +3,8 @@ export interface Message {
   id: number;
   group_chat_id: number;
   display_name: string | null;
+  /** Real username (for moderation in anonymous rooms). */
+  username?: string | null;
   message_text: string | null;
   gif_url: string | null;
   sent_at: string;
@@ -45,8 +47,11 @@ export interface GroupChat {
   name: string;
   /** User id of the room's creator, when known. Null for legacy rooms. */
   owner_user_id?: number | null;
-  /** 1 when the room is discoverable in the rooms tab, 0 otherwise. */
-  is_public?: number | null;
+  is_hidden?: number | null;
+  password_hash?: string | null;
+  is_readonly?: number | null;
+  is_anonymous?: number | null;
+  is_transparent?: number | null;
 }
 
 /** Saved group chat in local storage */
@@ -61,6 +66,7 @@ export interface WSMessage {
     | "message"
     | "editMessage"
     | "deleteMessage"
+    | "deleteRoom"
     | "messageReactions"
     | "error"
     | "pong";
@@ -82,6 +88,8 @@ export interface WSMessage {
   /** Reaction aggregate for messageReactions events. */
   reactions?: Reaction[];
   displayNameText?: string;
+  /** Real username (not display name) — for admin mod actions in anon rooms. */
+  username?: string;
   gifUrl?: string | null;
   timestamp?: string;
   avatarUrl?: string | null;
@@ -121,6 +129,7 @@ export interface ApiError {
 export interface AuthUser {
   id: number;
   username: string;
+  isAdmin?: boolean;
   bio?: string | null;
   picture_url?: string | null;
 }

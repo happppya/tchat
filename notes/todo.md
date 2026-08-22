@@ -1,0 +1,2 @@
+- [] Message length limit
+- [] Word wrapping

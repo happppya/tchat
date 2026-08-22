@@ -63,7 +63,7 @@ beforeAll(async () => {
 
   app = express();
   app.use(express.json({ limit: "5mb" }));
-  app.use("/api", createRouter({ db, broadcast: () => {} }));
+  app.use("/api", createRouter({ db, broadcast: () => {}, sendToUser: () => {} }));
 
   httpServer = http.createServer(app);
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
@@ -80,7 +80,7 @@ describe("room membership enforcement", () => {
   // Room 424242 exists; alice is a member, bob is not.
   beforeAll(async () => {
     await db.run(
-      "INSERT INTO group_chats (id, name, is_public) VALUES (424242, 'Secret', 0)"
+      "INSERT INTO group_chats (id, name) VALUES (424242, 'Secret')"
     );
     await db.run(
       "INSERT INTO room_members (user_id, room_id) VALUES ((SELECT id FROM users WHERE username = 'alice'), 424242)"

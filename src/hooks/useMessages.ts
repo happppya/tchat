@@ -159,6 +159,7 @@ export function useMessages(groupChatId: number | null) {
         id: msg.id ?? tempIdRef.current--,
         group_chat_id: msg.groupChatId,
         display_name: msg.displayNameText ?? null,
+        username: msg.username ?? null,
         message_text: msg.messageText ?? null,
         gif_url: msg.gifUrl ?? null,
         avatar_url: msg.avatarUrl ?? null,

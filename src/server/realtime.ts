@@ -5,6 +5,12 @@ import {
   sqliteNow,
   validateGCID,
   isRoomMember,
+  isSiteAdmin,
+  isRoomBanned,
+  isRoomMuted,
+  roomIsReadonly,
+  roomIsAnonymous,
+  getAnonName,
   addMessageToTable,
   type DB,
 } from './db';
@@ -12,6 +18,8 @@ import {
 interface Realtime {
   wss: WebSocketServer;
   broadcast: (payload: unknown, groupChatId?: number | null) => void;
+  /** Send a JSON frame to every socket belonging to a specific user. */
+  sendToUser: (userId: number, payload: unknown) => void;
 }
 
 type AuthedSocket = WebSocket & { session?: Session };
@@ -57,7 +65,16 @@ export function createRealtime({ db }: { db: DB }): Realtime {
       });
   }
 
-  return { wss, broadcast };
+  function sendToUser(userId: number, payload: unknown): void {
+    const data = JSON.stringify(payload);
+    wss.clients.forEach((client) => {
+      const session = (client as AuthedSocket).session;
+      if (!session || session.userId !== userId) return;
+      if (client.readyState === WebSocket.OPEN) client.send(data);
+    });
+  }
+
+  return { wss, broadcast, sendToUser };
 }
 
 /** Send a JSON error over a WebSocket. */
@@ -140,9 +157,17 @@ async function handleFrame(
     fileType = null,
     replyToId = null,
   } = messageJSON;
-  // The display name is always the authenticated username — clients cannot
-  // spoof another user's identity.
-  const displayNameText = session.username;
+  // The display name is the authenticated username unless the room is
+  // anonymous and the user is not an admin.
+  let displayNameText = session.username;
+  const isAnon =
+    groupChatId !== undefined &&
+    groupChatId !== null &&
+    (await roomIsAnonymous(db, groupChatId));
+  const isAdmin = session.isAdmin || (await isSiteAdmin(db, session.userId));
+  if (isAnon && !isAdmin) {
+    displayNameText = await getAnonName(db, session.userId, groupChatId);
+  }
 
   if (type === 'ping') {
     ws.send(JSON.stringify({ type: 'pong' }));
@@ -182,6 +207,27 @@ async function handleFrame(
   // Posting is members-only, mirroring the HTTP read rules.
   if (!(await isRoomMember(db, session.userId, groupChatId))) {
     return wsError(ws, 'Join this room before sending messages');
+  }
+
+  // Banned users may not send messages.
+  if (await isRoomBanned(db, session.userId, groupChatId)) {
+    return wsError(ws, 'You are banned from this room');
+  }
+
+  // Muted users may not send messages (admins are immune).
+  if (
+    !session.isAdmin &&
+    (await isRoomMuted(db, session.userId, groupChatId))
+  ) {
+    return wsError(ws, 'You are muted in this room');
+  }
+
+  // Readonly rooms: only admins may speak.
+  if (
+    !session.isAdmin &&
+    (await roomIsReadonly(db, groupChatId))
+  ) {
+    return wsError(ws, 'This room is read-only (admins only)');
   }
 
   // Resolve the reply target server-side so clients can't spoof the quoted
@@ -241,19 +287,19 @@ async function handleFrame(
     replyAuthor
   );
 
-  // Broadcast a rebuilt payload instead of the raw parsed client object so no
-  // extra properties a client smuggles into its frame are relayed verbatim to
-  // every connected user. Scoped to the room's members only.
+  // Broadcast a rebuilt payload. In anonymous rooms, strip userId so
+  // non-admin clients can't track who sent what (admins see IDs via REST).
   broadcast(
     {
       type: 'message',
       id: messageId,
-      userId: session.userId,
+      userId: isAnon && !isAdmin ? null : session.userId,
       groupChatId,
       messageText,
       gifUrl,
       displayNameText,
-      avatarUrl,
+      username: session.username,
+      avatarUrl: isAnon && !isAdmin ? null : avatarUrl,
       timestamp: sqliteTextTimestamp,
       fileUrl,
       fileName,

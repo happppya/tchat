@@ -15,9 +15,22 @@ import {
 interface AuthState {
   user: AuthUser | null;
   loading: boolean; // true during the initial /api/me check
+  /**
+   * Non-null when signed in but the session cookie could not be verified
+   * (e.g. incognito blocks third-party cookies). The user stays signed in for
+   * this page load; they'll be signed out again on reload/navigation.
+   */
+  persistWarning: string | null;
 }
 
-let state: AuthState = { user: null, loading: true };
+const PERSIST_WARNING =
+  "Signed in, but this browser isn't keeping your session (cookies blocked). You may be signed out after a reload.";
+
+let state: AuthState = {
+  user: null,
+  loading: true,
+  persistWarning: null,
+};
 const listeners = new Set<() => void>();
 
 // Monotonic counter that lets us discard a stale initial /api/me result if a
@@ -58,47 +71,56 @@ function ensureInit() {
     });
 }
 
+/**
+ * Adopt the user returned by signup/login immediately, then check whether the
+ * browser actually kept the session cookie. When it didn't (incognito blocks
+ * third-party cookies, strict privacy settings), stay signed in for this page
+ * load and surface a warning instead of dead-ending — the account/action
+ * itself succeeded server-side.
+ */
+async function establishSession(
+  kind: "signup" | "login",
+  authenticate: () => Promise<AuthUser>
+): Promise<AuthUser> {
+  const user = await authenticate();
+
+  let persisted = true;
+  try {
+    persisted = (await fetchMe()) != null;
+  } catch {
+    // Can't verify right now (network blip); don't punish a successful auth.
+    persisted = true;
+  }
+
+  if (persisted) {
+    set({ user, loading: false, persistWarning: null });
+  } else {
+    console.warn(
+      `[auth] ${kind} succeeded but the session cookie was not persisted by this browser.`
+    );
+    set({ user, loading: false, persistWarning: PERSIST_WARNING });
+  }
+  return user;
+}
+
 export function useAuth() {
   ensureInit();
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const login = useCallback(async (username: string, password: string) => {
     authVersion++;
-    await apiLogin(username, password);
-    // Confirm the session cookie was actually stored before trusting the
-    // in-memory state — otherwise the user would be logged out on the next
-    // request/reload with no explanation.
-    const user = await fetchMe();
-    if (!user) {
-      set({ user: null, loading: false });
-      throw new Error(
-        "Logged in, but your session couldn't be saved. Check that cookies are enabled and the site is served over HTTPS."
-      );
-    }
-    set({ user, loading: false });
-    return user;
+    return establishSession("login", () => apiLogin(username, password));
   }, []);
 
   const signup = useCallback(async (username: string, password: string) => {
     authVersion++;
-    await apiSignup(username, password);
-    // Verify the session was established; the account exists even if the
-    // cookie was rejected, so point the user at login in that case.
-    const user = await fetchMe();
-    if (!user) {
-      set({ user: null, loading: false });
-      throw new Error(
-        "Account created, but your session couldn't be saved. Try logging in — and check that cookies are enabled and the site is served over HTTPS."
-      );
-    }
-    set({ user, loading: false });
-    return user;
+    return establishSession("signup", () => apiSignup(username, password));
   }, []);
 
   const logout = useCallback(async () => {
     authVersion++;
     await apiLogout();
-    set({ user: null, loading: false });
+    set({ user: null, loading: false, persistWarning: null });
   }, []);
 
   // Re-read the current user from the server (e.g. after editing a profile).

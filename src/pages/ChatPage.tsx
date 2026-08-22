@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMessages } from "../hooks/useMessages";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../hooks/useAuth";
-import { deleteGroupChat, joinRoom, leaveRoom } from "../services/api";
+import { deleteGroupChat, joinRoom, leaveRoom, roomCommand } from "../services/api";
 import { removeGC } from "../services/storage";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
@@ -19,8 +19,11 @@ export default function ChatPage() {
   const [profileUser, setProfileUser] = useState<string | null>(null);
   const [profileEditing, setProfileEditing] = useState(false);
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, persistWarning } = useAuth();
   const [actionError, setActionError] = useState("");
+  const [wsError, setWsError] = useState("");
+  // Clear WS error when changing rooms.
+  useEffect(() => { setWsError(""); }, [activeGCId]);
 
   const {
     messages,
@@ -40,12 +43,18 @@ export default function ChatPage() {
   const handleWSIncoming = useCallback(
     (msg: WSMessage) => {
       if (msg.type === "error") {
-        console.error("Server error:", msg.messageText);
+        setWsError(msg.messageText || "Something went wrong");
+        return;
+      }
+      if (msg.type === "deleteRoom" && msg.groupChatId === activeGCId) {
+        removeGC(msg.groupChatId);
+        setActiveGCId(null);
+        setActionError("This room was deleted.");
         return;
       }
       handleWSMessage(msg);
     },
-    [handleWSMessage]
+    [handleWSMessage, activeGCId]
   );
 
   const { send } = useWebSocket(handleWSIncoming);
@@ -79,16 +88,14 @@ export default function ChatPage() {
 
   const handleSelectGC = useCallback(async (id: number) => {
     setActionError("");
-    // The server enforces members-only reads and sends, so finish joining
-    // before opening the room; otherwise history loads can 403 on a
-    // first-time join. Joining is idempotent for existing members.
+    setActiveGCId(id);
+    // Join the room (idempotent for existing members). Failure is surfaced
+    // as an error banner but does not block the room from opening.
     try {
       await joinRoom(id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not join room");
-      return;
     }
-    setActiveGCId(id);
     // On mobile, auto-close sidebar
     if (window.innerWidth < 768) {
       setSidebarVisible(false);
@@ -97,6 +104,9 @@ export default function ChatPage() {
 
   // Only the room's creator may delete it.
   const isOwner = !!user && !!gcInfo && gcInfo.owner_user_id === user.id;
+
+  // Whether the current user is admin or room staff for mod actions.
+  const viewerIsStaff = !!user?.isAdmin || !!(gcInfo as any)?.viewer_is_staff;
 
   const handleDeleteRoom = useCallback(async () => {
     if (!activeGCId) return;
@@ -142,6 +152,60 @@ export default function ChatPage() {
       }
     },
     [editMessage]
+  );
+
+  // Slash command handler: delegates to the roomCommand API.
+  const handleSlashCommand = useCallback(
+    async (command: string, arg: string) => {
+      if (!activeGCId) return;
+      setActionError("");
+      // join/leave are handled client-side.
+      if (command === "join") {
+        const code = parseInt(arg.replace(/^#/, ""), 10);
+        if (code) await handleSelectGC(code);
+        return;
+      }
+      if (command === "leave") {
+        await handleLeaveRoom();
+        return;
+      }
+      try {
+        const res = await roomCommand(activeGCId, command, arg);
+        setActionError("");
+        // Optional: flash a success message.
+        console.log("[roomCommand]", res.message);
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : `Command failed: ${command}`
+        );
+      }
+    },
+    [activeGCId, handleSelectGC, handleLeaveRoom]
+  );
+
+  // Room link handler from [#12345] in messages.
+  const handleJoinRoom = useCallback(
+    (roomCode: number) => {
+      handleSelectGC(roomCode);
+    },
+    [handleSelectGC]
+  );
+
+  // Mod action from the name-click context menu.
+  const handleModAction = useCallback(
+    async (username: string, action: string) => {
+      if (!activeGCId) return;
+      setActionError("");
+      try {
+        const res = await roomCommand(activeGCId, action, username);
+        console.log("[modAction]", res.message);
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : `Action failed: ${action}`
+        );
+      }
+    },
+    [activeGCId]
   );
 
   const handleDeleteMessage = useCallback(
@@ -275,7 +339,7 @@ export default function ChatPage() {
         </button>
       )}
 
-      {!activeGCId ? (
+      {activeGCId === null ? (
         <div className="flex-1 flex items-center justify-center flex-col text-[var(--text-muted)] text-sm">
           <div className="flex items-center gap-2">
             <span className="text-[var(--accent)] glow">tchat</span>
@@ -294,6 +358,11 @@ export default function ChatPage() {
               {actionError}
             </div>
           )}
+          {!actionError && persistWarning && (
+            <div className="mt-3 border border-[var(--warning, #b58900)]/40 bg-[var(--warning, #b58900)]/10 px-3 py-1.5 text-[var(--warning, #b58900)] text-sm max-w-md">
+              {persistWarning}
+            </div>
+          )}
         </div>
       ) : (
         <ChatWindow
@@ -301,14 +370,19 @@ export default function ChatPage() {
           messages={messages}
           gcName={gcName}
           isOwner={isOwner}
+          viewerIsStaff={viewerIsStaff}
+          viewerIsAdmin={!!user?.isAdmin}
           hasMore={hasMore}
           loadingOlder={loadingOlder}
-          error={error || actionError}
+          error={error || actionError || wsError}
           onSendMessage={handleSendMessage}
           onDeleteRoom={handleDeleteRoom}
           onLeaveRoom={handleLeaveRoom}
           onViewProfile={handleViewProfile}
           onLoadOlder={loadOlder}
+          onSlashCommand={handleSlashCommand}
+          onJoinRoom={handleJoinRoom}
+          onModAction={handleModAction}
           currentUserId={user?.id ?? null}
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}

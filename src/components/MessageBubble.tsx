@@ -13,11 +13,17 @@ interface Props {
   group: MessageGroup;
   /** The logged-in user's id, for deciding whether to show edit/delete. */
   currentUserId: number | null;
+  /** Whether the viewer is an admin or room staff. */
+  viewerIsStaff: boolean;
+  /** Whether the viewer is a site admin (can edit/delete any message). */
+  viewerIsAdmin: boolean;
   onViewProfile: (username: string) => void;
   onEditMessage: (messageId: number, text: string) => void;
   onDeleteMessage: (messageId: number) => void;
   onReply: (message: Message) => void;
   onToggleReaction: (messageId: number, emoji: string) => void;
+  /** Staff actions on a user: kick, ban, mute, mod, demod. */
+  onModAction: (username: string, action: string) => void;
 }
 
 /**
@@ -28,15 +34,19 @@ interface Props {
 export default function MessageBubble({
   group,
   currentUserId,
+  viewerIsStaff,
+  viewerIsAdmin,
   onViewProfile,
   onEditMessage,
   onDeleteMessage,
   onReply,
   onToggleReaction,
+  onModAction,
 }: Props) {
   const time = formatGroupTime(group.firstSentAt);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [nameMenuOpen, setNameMenuOpen] = useState(false);
 
   const startEdit = (message: Message) => {
     setEditingId(message.id);
@@ -66,11 +76,11 @@ export default function MessageBubble({
       className="px-1 py-1 leading-relaxed"
     >
       {/* Author header: avatar + clickable name + time */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap relative">
         <button
-          onClick={() => onViewProfile(group.displayName)}
+          onClick={() => setNameMenuOpen((p) => !p)}
           data-testid="message-author"
-          title={`View ${group.displayName}'s profile`}
+          title={`${group.displayName} — click for actions`}
           className="flex items-center gap-1.5 p-0 border-none bg-transparent cursor-pointer text-left"
         >
           <Avatar name={group.displayName} src={group.avatarUrl} size={24} />
@@ -81,6 +91,61 @@ export default function MessageBubble({
         <span className="text-[var(--text-muted)] text-xs">
           {time && `[${time}]`}
         </span>
+
+        {/* Name context menu */}
+        {nameMenuOpen && (
+          <div className="absolute top-full left-0 z-20 mt-1 min-w-[140px] border border-[var(--border-primary)] bg-[var(--bg-primary)] shadow-xl text-xs flex flex-col">
+            <button
+              onClick={() => {
+                setNameMenuOpen(false);
+                onViewProfile(group.displayName);
+              }}
+              className="px-2 py-1.5 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
+            >
+              view profile
+            </button>
+            {/* Staff menu: hidden in anon rooms unless viewer is admin, since
+                display names are random and can't be resolved to users. */}
+            {viewerIsStaff && (!group.username ? viewerIsAdmin : true) && (
+              <>
+                <div className="border-t border-[var(--border-primary)]" />
+                {[
+                  ["kick", "Kick"],
+                  ["ban", "Ban"],
+                ].map(([action, label]) => (
+                  <button
+                    key={action}
+                    onClick={() => {
+                      setNameMenuOpen(false);
+                      onModAction(group.username ?? group.displayName, action);
+                    }}
+                    className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
+                  >
+                    {label}
+                  </button>
+                ))}
+                <StaffToggleButton
+                  labelOn="Unmute"
+                  labelOff="Mute"
+                  actionOn="unmute"
+                  actionOff="mute"
+                  displayName={group.username ?? group.displayName}
+                  onModAction={onModAction}
+                  closeMenu={() => setNameMenuOpen(false)}
+                />
+                <StaffToggleButton
+                  labelOn="Demote mod"
+                  labelOff="Promote mod"
+                  actionOn="demod"
+                  actionOff="mod"
+                  displayName={group.username ?? group.displayName}
+                  onModAction={onModAction}
+                  closeMenu={() => setNameMenuOpen(false)}
+                />
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Message lines */}
@@ -90,10 +155,11 @@ export default function MessageBubble({
             key={msg.id ?? idx}
             message={msg}
             isOwn={
-              currentUserId !== null &&
-              msg.user_id !== null &&
-              msg.user_id !== undefined &&
-              msg.user_id === currentUserId
+              viewerIsAdmin ||
+              (currentUserId !== null &&
+               msg.user_id !== null &&
+               msg.user_id !== undefined &&
+               msg.user_id === currentUserId)
             }
             editing={editingId === msg.id}
             draft={draft}
@@ -366,6 +432,40 @@ function ActionButton({
         {label}
       </span>
       <span>{icon}</span>
+    </button>
+  );
+}
+
+interface ToggleButtonProps {
+  labelOn: string;
+  labelOff: string;
+  actionOn: string;
+  actionOff: string;
+  displayName: string;
+  onModAction: (username: string, action: string) => void;
+  closeMenu: () => void;
+}
+
+function StaffToggleButton({
+  labelOn,
+  labelOff,
+  actionOn,
+  actionOff,
+  displayName,
+  onModAction,
+  closeMenu,
+}: ToggleButtonProps) {
+  const [on, setOn] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        closeMenu();
+        setOn((p) => !p);
+        onModAction(displayName, on ? actionOn : actionOff);
+      }}
+      className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
+    >
+      {on ? labelOn : labelOff}
     </button>
   );
 }

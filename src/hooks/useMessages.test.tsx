@@ -43,7 +43,6 @@ describe("useMessages room-switch race", () => {
     const info = (name: string) => ({
       id: name === "Room B" ? 222 : 111,
       name,
-      is_public: 0,
     });
 
     const msgDeferrals = new Map<number, Deferred>();

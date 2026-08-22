@@ -13,6 +13,17 @@ import { useAuth } from "../hooks/useAuth";
 import CreateGroupChat from "./CreateGroupChat";
 import { MAX_GC_ID_DIGITS } from "../constants";
 
+/** Short label for room type flags (non-exclusive). */
+function typeTags(room: GroupChat): string {
+  const tags: string[] = [];
+  if (room.is_hidden) tags.push("🔒");
+  if (room.is_readonly) tags.push("🤫");
+  if (room.is_anonymous) tags.push("👤");
+  if (room.is_transparent) tags.push("👁");
+  if (tags.length === 0) tags.push("📂");
+  return tags.join("");
+}
+
 interface Props {
   activeGCId: number | null;
   onSelectGC: (id: number) => void;
@@ -250,11 +261,14 @@ export default function Sidebar({
               <span className="pl-1 text-[10px] text-[var(--text-muted)]">
                 #{room.id}
               </span>
+              <span className="ml-1" title="Room types">
+                {typeTags(room)}
+              </span>
             </button>
           ))}
           {!roomsLoading && !roomsError && publicRooms.length === 0 && (
             <div className="text-center text-xs text-[var(--text-muted)] py-6 px-2">
-              $ no public rooms
+              $ no rooms
             </div>
           )}
         </div>

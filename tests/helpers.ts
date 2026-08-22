@@ -61,15 +61,11 @@ export async function signUp(
 export async function createGroupChat(
   page: Page,
   id: string,
-  name: string,
-  isPublic = false
+  name: string
 ): Promise<void> {
   await page.click('[data-testid="create-gc-toggle"]');
   await page.fill('[data-testid="create-gc-id"]', id);
   await page.fill('[data-testid="create-gc-name"]', name);
-  if (isPublic) {
-    await page.click('[data-testid="visibility-public"]');
-  }
   await page.click('[data-testid="create-gc-submit"]');
   await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
 }

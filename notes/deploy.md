@@ -15,11 +15,21 @@ gcloud run deploy tchat `
 
 Turn it off
 ```
-gcloud run services update tchat --region us-east1 --min-instances 0 --max-instances 0
+gcloud run services update tchat --region us-east1 --min-instances 0
+
+gcloud run services remove-iam-policy-binding tchat `
+  --region us-east1 `
+  --member="allUsers" `
+  --role="roles/run.invoker"
 ```
 
 Turn it on
 ```
+gcloud run services add-iam-policy-binding tchat `
+  --region us-east1 `
+  --member="allUsers" `
+  --role="roles/run.invoker"
+
 gcloud run services update tchat --region us-east1 --min-instances 1 --max-instances 1
 ```
 

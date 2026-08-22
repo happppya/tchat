@@ -112,13 +112,22 @@ export async function fetchGCInfo(
   return res.json();
 }
 
-/** Create a new group chat. */
+/** Create a new group chat (admin only). */
 export async function createGroupChat(
   id: number,
   name: string,
-  isPublic = false
+  opts: {
+    isHidden?: boolean;
+    password?: string;
+    isReadonly?: boolean;
+    isAnonymous?: boolean;
+    isTransparent?: boolean;
+  } = {}
 ): Promise<void> {
-  await request("/createGC", jsonBody({ id, name, isPublic }));
+  await request(
+    "/createGC",
+    jsonBody({ id, name, ...opts })
+  );
 }
 
 /** Delete a group chat. Only the room owner may do this. */
@@ -141,8 +150,11 @@ export async function fetchMyRooms(): Promise<GroupChat[]> {
 }
 
 /** Add the current user to a room's member list (idempotent). */
-export async function joinRoom(groupChatId: number): Promise<void> {
-  await request("/joinRoom", jsonBody({ groupChatId }));
+export async function joinRoom(
+  groupChatId: number,
+  password?: string
+): Promise<{ message: string; anonName?: string | null }> {
+  return request("/joinRoom", jsonBody({ groupChatId, password }));
 }
 
 /** Remove the current user from a room's member list. */
@@ -278,4 +290,16 @@ export async function fetchMe(): Promise<AuthUser | null> {
   }
   const body = await res.json().catch(() => null);
   return body ? body.user : null;
+}
+
+/** Executes a room moderation command (kick, ban, mute, mod, etc.). */
+export async function roomCommand(
+  groupChatId: number,
+  command: string,
+  targetUsername: string
+): Promise<{ message: string }> {
+  return request(
+    "/roomCommand",
+    jsonBody({ groupChatId, command, targetUsername })
+  );
 }

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { uploadFile } from "../services/api";
 import { MAX_UPLOAD_BYTES, MAX_MESSAGE_LENGTH } from "../constants";
@@ -7,12 +7,26 @@ import type { FileAttachment, ReplyTarget } from "../types";
 import GifPicker from "./GifPicker";
 import Avatar from "./Avatar";
 
+/** Available slash commands with argument hints. */
+const SLASH_COMMANDS: Record<string, string> = {
+  "/kick": "@username",
+  "/ban": "@username",
+  "/unban": "@username",
+  "/mute": "@username",
+  "/unmute": "@username",
+  "/mod": "@username",
+  "/demod": "@username",
+  "/join": "#roomcode",
+  "/leave": "",
+};
+
 interface Props {
   onSend: (
     text: string,
     gifUrl: string | null,
     file?: FileAttachment | null
   ) => void;
+  onSlashCommand?: (command: string, arg: string) => void;
   /** The message currently being replied to, if any. */
   replyTo?: ReplyTarget | null;
   onCancelReply?: () => void;
@@ -27,7 +41,12 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export default function MessageComposer({ onSend, replyTo, onCancelReply }: Props) {
+export default function MessageComposer({
+  onSend,
+  replyTo,
+  onCancelReply,
+  onSlashCommand,
+}: Props) {
   const { user } = useAuth();
   const [text, setText] = useState("");
   const [gifUrl, setGifUrl] = useState<string | null>(null);
@@ -42,17 +61,42 @@ export default function MessageComposer({ onSend, replyTo, onCancelReply }: Prop
   // so clients cannot spoof another user's identity.
   const promptName = user?.username ?? "guest";
 
+  // Detect whether the user is typing a slash command.
+  const slashMatch = useMemo(() => {
+    if (!text.startsWith("/")) return null;
+    const space = text.indexOf(" ");
+    const cmd = space === -1 ? text : text.slice(0, space);
+    const arg = space === -1 ? "" : text.slice(space + 1);
+    if (SLASH_COMMANDS[cmd] !== undefined) return { cmd, arg, hint: SLASH_COMMANDS[cmd] };
+    return null;
+  }, [text]);
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && !gifUrl && !file) return;
+
+    // Intercept slash commands.
+    if (slashMatch && onSlashCommand) {
+      onSlashCommand(slashMatch.cmd.slice(1), slashMatch.arg);
+      setText("");
+      return;
+    }
+
     onSend(trimmed, gifUrl, file);
     setText("");
     setGifUrl(null);
     setFile(null);
     setError("");
-  }, [text, gifUrl, file, onSend]);
+  }, [text, gifUrl, file, slashMatch, onSend, onSlashCommand]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Tab completion for slash commands.
+    if (e.key === "Tab" && slashMatch && !slashMatch.arg) {
+      e.preventDefault();
+      setText(slashMatch.cmd + " ");
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -194,6 +238,15 @@ export default function MessageComposer({ onSend, replyTo, onCancelReply }: Prop
             onClick={() => setGifUrl(null)}
             title="Click to remove GIF"
           />
+        </div>
+      )}
+
+      {/* Slash command hint */}
+      {slashMatch && (
+        <div className="mt-1 text-xs text-[var(--text-muted)] flex items-center gap-2">
+          <span className="text-[var(--accent)]">{slashMatch.cmd}</span>
+          {slashMatch.hint && <span>— {slashMatch.hint}</span>}
+          <span className="ml-auto opacity-50">tab to complete</span>
         </div>
       )}
 
