@@ -164,6 +164,19 @@ export async function pruneExpiredSessions(): Promise<void> {
   await db.run('DELETE FROM sessions WHERE expires_at < ?', [Date.now()]);
 }
 
+/**
+ * The SameSite value a cookie may actually carry. `None` is only valid when
+ * paired with `Secure`; browsers silently drop a `SameSite=None` cookie served
+ * over plain HTTP, which is exactly the "session couldn't be saved" failure on
+ * localhost dev. So when the request is not secure we downgrade to Lax.
+ */
+function effectiveSameSite(
+  requested: 'Lax' | 'None',
+  secure: boolean
+): 'Lax' | 'None' {
+  return requested === 'None' && !secure ? 'Lax' : requested;
+}
+
 /** Serialize a token into a Set-Cookie header value. */
 export function sessionCookie(
   token: string,
@@ -174,7 +187,14 @@ export function sessionCookie(
   } = {}
 ): string {
   const maxAgeMs = options.maxAgeMs ?? SESSION_TTL_MS;
-  const sameSite = options.sameSite ?? COOKIE_SAME_SITE;
+  const secure = options.secure ?? false;
+  const requested = options.sameSite ?? COOKIE_SAME_SITE;
+  const sameSite = effectiveSameSite(requested, secure);
+  if (requested === 'None' && !secure) {
+    console.warn(
+      '[auth] SameSite=None requested but the request is not secure; falling back to SameSite=Lax so the session cookie is not dropped.'
+    );
+  }
   const attrs = [
     `${SESSION_COOKIE}=${token}`,
     'Path=/',
@@ -185,7 +205,7 @@ export function sessionCookie(
   // Only mark Secure when the request actually arrived over HTTPS (directly or
   // via a trusted proxy). Forcing it on whenever NODE_ENV=production breaks
   // login/signup on plain-HTTP deploys, because browsers drop Secure cookies.
-  if (options.secure) attrs.push('Secure');
+  if (secure) attrs.push('Secure');
   return attrs.join('; ');
 }
 
@@ -195,7 +215,7 @@ export function clearSessionCookie(secure = false): string {
     `${SESSION_COOKIE}=`,
     'Path=/',
     'HttpOnly',
-    `SameSite=${COOKIE_SAME_SITE}`,
+    `SameSite=${effectiveSameSite(COOKIE_SAME_SITE, secure)}`,
     'Max-Age=0',
   ];
   if (secure) attrs.push('Secure');

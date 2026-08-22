@@ -11,6 +11,7 @@ import { openDatabase, deleteEmptyRooms } from './src/server/db';
 import { createRealtime, attachMessageHandler } from './src/server/realtime';
 import { createRouter } from './src/server/routes';
 import { startCli } from './src/server/cli';
+import { createGracefulShutdown } from './src/server/shutdown';
 import {
   initSessionStore,
   readSession,
@@ -102,8 +103,8 @@ async function main(): Promise<void> {
   console.log('Connected to local SQLite file database!');
 
   // Real-time layer: one WebSocket server + broadcast shared by routes and the
-  // message handler.
-  const { wss, broadcast } = createRealtime();
+  // message handler. The db powers member-scoped broadcasts.
+  const { wss, broadcast } = createRealtime({ db });
   attachMessageHandler({ wss, db, broadcast });
 
   // API routes are mounted after the DB is ready.
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
 
   // Reap fully-empty rooms and expired sessions on a timer. The HTTP server
   // keeps the process alive.
-  setInterval(() => {
+  const cleanupTimer = setInterval(() => {
     deleteEmptyRooms(db).catch((err) => {
       console.error('Empty-room cleanup failed:', (err as Error).message);
     });
@@ -160,13 +161,11 @@ async function main(): Promise<void> {
     });
   }, CLEANUP_INTERVAL_MS);
 
-  function shutdown(): void {
-    console.log('Closing database...');
-    db.close()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(1));
-  }
-  process.on('SIGINT', shutdown);
+  // Graceful shutdown for SIGINT *and* SIGTERM (Docker/K8s send SIGTERM):
+  // stop the janitor, drop WS clients, close listeners, then the database.
+  const shutdown = createGracefulShutdown({ server, wss, db, cleanupTimer });
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   startCli({ db, server, shutdown });
 

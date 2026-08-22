@@ -199,7 +199,7 @@ export default function MessageComposer({ onSend, replyTo, onCancelReply }: Prop
 
       {/* Identity sits bottom-left; errors flush right */}
       <div className="flex items-center gap-1.5 mt-1.5 min-h-5">
-        <Avatar name={promptName} src={user?.picture_url ?? null} size={16} />
+        <Avatar name={promptName} src={user?.picture_url ?? null} size={20} />
         <span
           data-testid="composer-user"
           className="text-xs text-[var(--text-muted)] break-all min-w-0"

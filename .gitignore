@@ -5,4 +5,7 @@ database.db
 dist/
 dist-server/
 uploads/
-test-results/
+test-results/test-database.db
+test-database.db-shm
+test-database.db-wal
+*.log

@@ -77,12 +77,18 @@ export default function ChatPage() {
     [activeGCId, send]
   );
 
-  const handleSelectGC = useCallback((id: number) => {
-    setActiveGCId(id);
+  const handleSelectGC = useCallback(async (id: number) => {
     setActionError("");
-    // Selecting a room makes you a member (idempotent). Fire-and-forget so
-    // the chat opens immediately; the server records the membership.
-    if (id) joinRoom(id).catch(() => {});
+    // The server enforces members-only reads and sends, so finish joining
+    // before opening the room; otherwise history loads can 403 on a
+    // first-time join. Joining is idempotent for existing members.
+    try {
+      await joinRoom(id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not join room");
+      return;
+    }
+    setActiveGCId(id);
     // On mobile, auto-close sidebar
     if (window.innerWidth < 768) {
       setSidebarVisible(false);
@@ -283,6 +289,11 @@ export default function ChatPage() {
             </kbd>
             <span>for commands · select a channel to begin</span>
           </div>
+          {actionError && (
+            <div className="mt-3 border border-[var(--error)]/40 bg-[var(--error)]/10 px-3 py-1.5 text-[var(--error)] text-sm">
+              {actionError}
+            </div>
+          )}
         </div>
       ) : (
         <ChatWindow

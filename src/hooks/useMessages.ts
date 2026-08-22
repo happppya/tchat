@@ -21,12 +21,14 @@ export function useMessages(groupChatId: number | null) {
   const [error, setError] = useState<string>("");
   const [hasMore, setHasMore] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const loadingRef = useRef(false);
+  // Monotonic counter for room loads: only the most recently requested room's
+  // response may be applied, so a slow fetch for room A can never render its
+  // history under room B after the user switches rooms.
+  const loadGenerationRef = useRef(0);
   const loadingOlderRef = useRef(false);
 
   const loadMessages = useCallback(async (gcId: number) => {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
+    const generation = ++loadGenerationRef.current;
     setError("");
 
     try {
@@ -34,6 +36,7 @@ export function useMessages(groupChatId: number | null) {
         fetchMessages(gcId),
         fetchGCInfo(gcId),
       ]);
+      if (generation !== loadGenerationRef.current) return; // stale load
 
       if ((info as { error?: string }).error) {
         setGcInfo(null);
@@ -53,10 +56,10 @@ export function useMessages(groupChatId: number | null) {
         saveGC(gcId, info.name || "Chat");
       }
     } catch {
+      // A failed load must not clobber the room that is currently shown.
+      if (generation !== loadGenerationRef.current) return;
       setGcInfo(null);
       setError("Failed to load messages");
-    } finally {
-      loadingRef.current = false;
     }
   }, []);
 

@@ -367,6 +367,7 @@ test("empty rooms are automatically deleted", async ({ page }) => {
 
   await page.fill('[data-testid="room-code-input"]', id);
   await page.press('[data-testid="room-code-input"]', "Enter");
-  // Joining now fails because the room no longer exists on the server.
-  await expect(page.getByText("Failed to load messages")).toBeVisible();
+  // Joining now fails because the room no longer exists on the server; the
+  // join error is surfaced in the no-channel pane.
+  await expect(page.getByText("Room not found")).toBeVisible();
 });

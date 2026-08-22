@@ -70,6 +70,39 @@ export function isAllowedWsOrigin(origin: string | undefined): boolean {
 export const MAX_MESSAGE_LENGTH = 4000;
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MB
 
+// WebSocket frames are tiny (≤4000-char text + metadata). Capping the frame
+// size keeps one malicious client from making the server buffer ~100 MiB
+// frames (the ws library's default maxPayload) and rebroadcasting them.
+export const MAX_WS_FRAME_BYTES = 64 * 1024;
+
+/**
+ * Upload MIME allowlist. Everything else is rejected outright: types that can
+ * execute script when served same-origin (SVG, HTML) must never be stored,
+ * even though uploaded filenames are randomized.
+ */
+export const ALLOWED_UPLOAD_MIMES: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "text/plain",
+  "application/json",
+  "application/zip",
+  "application/x-zip-compressed",
+]);
+
+// Rate limiting. Login/signup burn real CPU (scrypt), uploads write disk, and
+// gif search spends GIPHY quota — each gets its own request bucket per client
+// IP. All knobs are env-tunable (the Playwright suite raises them so e2e
+// traffic from a single 127.0.0.1 address never trips the limits).
+export const RATE_LIMIT_WINDOW_MS =
+  Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
+export const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || 30;
+export const RATE_LIMIT_UPLOAD_MAX =
+  Number(process.env.RATE_LIMIT_UPLOAD_MAX) || 60;
+export const RATE_LIMIT_GIF_MAX = Number(process.env.RATE_LIMIT_GIF_MAX) || 120;
+
 /**
  * Absolute path to the project root. The compiled server lives in
  * dist-server/src/server/constants.js, so three levels up is the repo root

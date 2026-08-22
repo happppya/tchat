@@ -13,6 +13,24 @@ export default defineConfig({
         ws: true,
       },
     },
+    // The backend writes volatile artifacts into the project root while the
+    // dev server runs (SQLite WAL sidecars on every message since WAL mode,
+    // uploads, logs). Without these ignores, each write makes Vite broadcast
+    // a full-reload and the browser refreshes mid-chat.
+    watch: {
+      ignored: [
+        "**/uploads/**",
+        "**/*.db",
+        "**/*.db-shm",
+        "**/*.db-journal",
+        "**/*.db-wal",
+        "**/*.log",
+        "**/dist/**",
+        "**/dist-server/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
+      ],
+    },
   },
   build: {
     outDir: "dist",

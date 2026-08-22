@@ -5,6 +5,9 @@ import { EMPTY_ROOM_TTL_MS } from './constants';
 
 export type DB = Database<sqlite3.Database, sqlite3.Statement>;
 
+/** Busy handler wait before a locked write fails with SQLITE_BUSY (ms). */
+const BUSY_TIMEOUT_MS = 5000;
+
 /**
  * Open the SQLite database and run all idempotent migrations. Returns the
  * ready-to-use db handle.
@@ -14,6 +17,14 @@ export async function openDatabase(dbPath: string): Promise<DB> {
     filename: dbPath,
     driver: sqlite3.Database,
   });
+  // Concurrency settings: the HTTP API and WebSocket handlers write from many
+  // interleaved async paths, so without WAL + a busy timeout any overlapping
+  // write pair surfaces as SQLITE_BUSY errors. foreign_keys is off by default
+  // per connection; enabling it keeps future schema changes safe (existing
+  // tables declare no FKs, so this is inert until they do).
+  await db.exec('PRAGMA journal_mode = WAL;');
+  await db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
+  await db.exec('PRAGMA foreign_keys = ON;');
   await runMigrations(db);
   return db;
 }
@@ -383,6 +394,19 @@ export async function removeRoomMember(
       roomId,
     ]);
   }
+}
+
+/** True when `userId` is currently a member of room `roomId`. */
+export async function isRoomMember(
+  db: DB,
+  userId: number,
+  roomId: number
+): Promise<boolean> {
+  const row = await db.get(
+    'SELECT 1 AS present FROM room_members WHERE user_id = ? AND room_id = ?',
+    [userId, roomId]
+  );
+  return row !== undefined;
 }
 
 /** Rooms the given user is currently a member of. */

@@ -12,7 +12,9 @@ import {
   readSession,
   requireAuth,
 } from './auth';
+import { authLimiter, uploadLimiter, gifLimiter } from './rateLimit';
 import {
+  ALLOWED_UPLOAD_MIMES,
   MAX_GC_ID_DIGITS,
   MAX_MESSAGE_LENGTH,
   MAX_UPLOAD_BYTES,
@@ -25,6 +27,7 @@ import {
   addRoomMember,
   removeRoomMember,
   getUserRooms,
+  isRoomMember,
   createGroupChat,
   destroyGroupChat,
   validateGCID,
@@ -67,7 +70,7 @@ export function createRouter({
   broadcast,
 }: {
   db: DB;
-  broadcast: (payload: unknown) => void;
+  broadcast: (payload: unknown, groupChatId?: number | null) => void;
 }): Router {
   const router = express.Router();
 
@@ -80,7 +83,7 @@ export function createRouter({
   // Auth
   // -------------------------------------------------------------------------
 
-  router.post('/signup', async (req: Request, res: Response) => {
+  router.post('/signup', authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body || {};
     const cleanUser = typeof username === 'string' ? username.trim() : '';
     const cleanPass = typeof password === 'string' ? password : '';
@@ -122,7 +125,7 @@ export function createRouter({
     }
   });
 
-  router.post('/login', async (req: Request, res: Response) => {
+  router.post('/login', authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body || {};
     const cleanUser = typeof username === 'string' ? username.trim() : '';
     const cleanPass = typeof password === 'string' ? password : '';
@@ -293,6 +296,13 @@ export function createRouter({
     if (!(await validateGCID(db, gcId))) {
       return res.status(400).json({ error: 'Invalid group chat ID' });
     }
+    // Room contents are for members only — knowing the numeric code is not
+    // enough to read a room you haven't joined.
+    if (!(await isRoomMember(db, req.session!.userId, gcId))) {
+      return res
+        .status(403)
+        .json({ error: 'You are not a member of this room' });
+    }
 
     const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [
       gcId,
@@ -400,6 +410,15 @@ export function createRouter({
     if (groupChatId && !(await validateGCID(db, gcId))) {
       return res.status(400).json({ error: 'Invalid group chat ID' });
     }
+    // Same membership rule as getGCInfo: history is members-only.
+    if (
+      groupChatId &&
+      !(await isRoomMember(db, req.session!.userId, gcId))
+    ) {
+      return res
+        .status(403)
+        .json({ error: 'You are not a member of this room' });
+    }
 
     const hasBefore = beforeSentAt !== undefined || beforeId !== undefined;
     if (hasBefore && (!beforeSentAt || !beforeId)) {
@@ -466,13 +485,16 @@ export function createRouter({
     );
     const updated = await db.get('SELECT * FROM messages WHERE id = ?', [id]);
 
-    broadcast({
-      type: 'editMessage',
-      groupChatId: existing.group_chat_id,
-      messageId: id,
-      messageText: cleanText,
-      editedAt,
-    });
+    broadcast(
+      {
+        type: 'editMessage',
+        groupChatId: existing.group_chat_id,
+        messageId: id,
+        messageText: cleanText,
+        editedAt,
+      },
+      existing.group_chat_id
+    );
 
     res.json(updated);
   });
@@ -498,11 +520,14 @@ export function createRouter({
     await db.run('DELETE FROM messages WHERE id = ?', [id]);
     await db.run('DELETE FROM message_reactions WHERE message_id = ?', [id]);
 
-    broadcast({
-      type: 'deleteMessage',
-      groupChatId: existing.group_chat_id,
-      messageId: id,
-    });
+    broadcast(
+      {
+        type: 'deleteMessage',
+        groupChatId: existing.group_chat_id,
+        messageId: id,
+      },
+      existing.group_chat_id
+    );
 
     res.json({ message: 'Message deleted' });
   });
@@ -523,6 +548,12 @@ export function createRouter({
     if (!existing) {
       return res.status(404).json({ error: 'Message not found' });
     }
+    // Reacting mutates shared room state, so it requires membership too.
+    if (!(await isRoomMember(db, req.session!.userId, existing.group_chat_id))) {
+      return res
+        .status(403)
+        .json({ error: 'You are not a member of this room' });
+    }
 
     const current = await db.get(
       'SELECT 1 AS present FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
@@ -541,12 +572,15 @@ export function createRouter({
     }
 
     const reactions = await getReactionsForMessage(db, id, req.session!.userId);
-    broadcast({
-      type: 'messageReactions',
-      groupChatId: existing.group_chat_id,
-      messageId: id,
-      reactions,
-    });
+    broadcast(
+      {
+        type: 'messageReactions',
+        groupChatId: existing.group_chat_id,
+        messageId: id,
+        reactions,
+      },
+      existing.group_chat_id
+    );
     res.json({ reactions });
   });
 
@@ -554,7 +588,11 @@ export function createRouter({
   // Files + GIFs
   // -------------------------------------------------------------------------
 
-  router.post('/upload', requireAuth, async (req: Request, res: Response) => {
+  router.post(
+    '/upload',
+    uploadLimiter,
+    requireAuth,
+    async (req: Request, res: Response) => {
     const { fileName, dataUrl } = req.body || {};
 
     if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
@@ -565,7 +603,12 @@ export function createRouter({
       return res.status(400).json({ error: 'Expected a base64 data URL' });
     }
 
-    const mime = match[1];
+    const mime = match[1].toLowerCase();
+    // Reject anything not explicitly allowlisted. SVG/HTML execute as script
+    // when served same-origin, so they can never be stored.
+    if (!ALLOWED_UPLOAD_MIMES.has(mime)) {
+      return res.status(415).json({ error: 'File type not allowed' });
+    }
     const buffer = Buffer.from(match[2], 'base64');
     if (buffer.length === 0) {
       return res.status(400).json({ error: 'File is empty' });
@@ -585,33 +628,39 @@ export function createRouter({
       return res.status(500).json({ error: 'Failed to store file' });
     }
 
-    res.status(201).json({
-      url: `/uploads/${storedName}`,
-      fileName: sanitizeFileName(fileName) || storedName,
-      fileType: mime,
-      size: buffer.length,
-    });
-  });
+      res.status(201).json({
+        url: `/uploads/${storedName}`,
+        fileName: sanitizeFileName(fileName) || storedName,
+        fileType: mime,
+        size: buffer.length,
+      });
+    }
+  );
 
   const giphyApiKey = process.env.GIPHY_API_KEY;
 
-  router.get('/searchGifs', requireAuth, async (req: Request, res: Response) => {
-    const start = performance.now();
-    const { query } = req.query;
-    try {
-      const url = `https://api.giphy.com/v1/gifs/search?api_key=${giphyApiKey}&q=${encodeURIComponent(
-        String(query ?? '')
-      )}&limit=12&rating=r`;
-      const response = await fetch(url);
-      const data = await response.json();
-      res.json(data);
-    } catch (error) {
-      console.error('GIPHY error:', error);
-      res.status(500).json({ error: 'Failed to fetch GIFs' });
+  router.get(
+    '/searchGifs',
+    gifLimiter,
+    requireAuth,
+    async (req: Request, res: Response) => {
+      const start = performance.now();
+      const { query } = req.query;
+      try {
+        const url = `https://api.giphy.com/v1/gifs/search?api_key=${giphyApiKey}&q=${encodeURIComponent(
+          String(query ?? '')
+        )}&limit=12&rating=r`;
+        const response = await fetch(url);
+        const data = await response.json();
+        res.json(data);
+      } catch (error) {
+        console.error('GIPHY error:', error);
+        res.status(500).json({ error: 'Failed to fetch GIFs' });
+      }
+      const end = performance.now();
+      console.log(`searchGifs took ${end - start} ms`);
     }
-    const end = performance.now();
-    console.log(`searchGifs took ${end - start} ms`);
-  });
+  );
 
   return router;
 }
