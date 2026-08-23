@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
+import { uniqueGcId, resetApp, signUpAdmin, createGroupChat } from "./helpers";
 
 /**
  * Message pagination: the server pages with a (sent_at, id) cursor (no
@@ -66,7 +66,7 @@ test("getMessages pages backward with a cursor, without overlap or gaps", async 
   page,
 }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Paging Room");
   await bulkSend(page, id, 7);
 
@@ -109,13 +109,13 @@ test("chat opens on the newest page and scroll-up loads older messages", async (
 }) => {
   test.setTimeout(60_000);
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Big Room");
   await bulkSend(page, id, 60);
 
   // Reopen the room fresh: only the most recent page is loaded.
   await page.reload();
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
   await page.click(`[data-testid="gc-button-${id}"]`);
   await expect(page.locator('[data-testid="message-list"]')).toBeVisible();
   await expect(page.locator('[data-testid="message-count"]')).toContainText(

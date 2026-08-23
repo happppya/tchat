@@ -5,6 +5,7 @@ import type {
   AuthUser,
   UserProfile,
   Reaction,
+  BoardGroup,
 } from "../types";
 import { API_BASE, MESSAGES_PAGE_SIZE } from "../constants";
 
@@ -122,12 +123,22 @@ export async function createGroupChat(
     isReadonly?: boolean;
     isAnonymous?: boolean;
     isTransparent?: boolean;
+    isPublic?: boolean;
   } = {}
 ): Promise<void> {
   await request(
     "/createGC",
     jsonBody({ id, name, ...opts })
   );
+}
+
+/** Rename a room (owner or admin). */
+export async function renameRoom(groupChatId: number, name: string): Promise<{ name: string }> {
+  return request("/renameRoom", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ groupChatId, name }),
+  });
 }
 
 /** Delete a group chat. Only the room owner may do this. */
@@ -139,7 +150,7 @@ export async function deleteGroupChat(groupChatId: number): Promise<void> {
   });
 }
 
-/** Fetch discoverable public rooms for the rooms tab. */
+/** Fetch public rooms for the board tab. */
 export async function fetchPublicRooms(): Promise<GroupChat[]> {
   return request<GroupChat[]>("/publicRooms");
 }
@@ -211,9 +222,10 @@ export async function uploadFile(
   return request<UploadedFile>("/upload", jsonBody({ fileName, dataUrl }));
 }
 
-/** Fetch a user's public profile. */
-export async function getProfile(username: string): Promise<UserProfile> {
-  return request<UserProfile>(`/profile/${encodeURIComponent(username)}`);
+/** Fetch a user's public profile, optionally scoped to a room. */
+export async function getProfile(username: string, groupChatId?: number | null): Promise<UserProfile> {
+  const qs = groupChatId ? `?groupChatId=${groupChatId}` : '';
+  return request<UserProfile>(`/profile/${encodeURIComponent(username)}${qs}`);
 }
 
 /** Update the current user's bio and optional profile picture. */
@@ -302,4 +314,52 @@ export async function roomCommand(
     "/roomCommand",
     jsonBody({ groupChatId, command, targetUsername })
   );
+}
+
+// ---------------------------------------------------------------------------
+// Board groups — admin-only mutations, anyone can read
+// ---------------------------------------------------------------------------
+
+/** Fetch board groups with their room ids. */
+export async function fetchBoardGroups(): Promise<BoardGroup[]> {
+  return request<BoardGroup[]>("/boardGroups");
+}
+
+/** Create a board group (admin only). */
+export async function createBoardGroup(name: string): Promise<BoardGroup> {
+  return request<BoardGroup>("/boardGroups", jsonBody({ name }));
+}
+
+/** Rename a board group (admin only). */
+export async function renameBoardGroup(id: number, name: string): Promise<void> {
+  await request(`/boardGroups/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** Delete a board group (admin only). */
+export async function deleteBoardGroup(id: number): Promise<void> {
+  await request(`/boardGroups/${id}`, { method: "DELETE" });
+}
+
+/** Reorder board groups (admin only). */
+export async function reorderBoardGroups(ids: number[]): Promise<void> {
+  await request("/boardGroups/reorder", jsonBody({ ids }));
+}
+
+/** Add a room to a board group (admin only). */
+export async function addRoomToBoardGroup(groupId: number, roomId: number): Promise<void> {
+  await request(`/boardGroups/${groupId}/rooms`, jsonBody({ roomId }));
+}
+
+/** Remove a room from its board group (admin only). */
+export async function removeRoomFromBoardGroup(roomId: number): Promise<void> {
+  await request(`/boardGroups/rooms/${roomId}`, { method: "DELETE" });
+}
+
+/** Reorder rooms within a board group (admin only). */
+export async function reorderBoardGroupRooms(groupId: number, roomIds: number[]): Promise<void> {
+  await request(`/boardGroups/${groupId}/reorder-rooms`, jsonBody({ roomIds }));
 }

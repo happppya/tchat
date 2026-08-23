@@ -3,13 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { useMessages } from "../hooks/useMessages";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../hooks/useAuth";
-import { deleteGroupChat, joinRoom, leaveRoom, roomCommand } from "../services/api";
-import { removeGC } from "../services/storage";
+import { deleteGroupChat, joinRoom, leaveRoom, roomCommand, renameRoom } from "../services/api";
+import { removeGC, renameSavedGC, ROOM_RENAMED_EVENT } from "../services/storage";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
 import CommandPalette from "../components/CommandPalette";
 import ProfileModal from "../components/ProfileModal";
 import type { CommandAction } from "../components/CommandPalette";
+import { roomTypeFullNames } from "../utils/roomTypes";
 import type { WSMessage, FileAttachment } from "../types";
 
 export default function ChatPage() {
@@ -52,6 +53,34 @@ export default function ChatPage() {
         setActionError("This room was deleted.");
         return;
       }
+      if (msg.type === "kicked" && msg.groupChatId === activeGCId) {
+        removeGC(msg.groupChatId);
+        setActiveGCId(null);
+        setActionError(msg.message || "You were kicked from this room.");
+        return;
+      }
+      if (msg.type === "banned") {
+        if (msg.groupChatId === activeGCId) {
+          removeGC(msg.groupChatId);
+          setActiveGCId(null);
+          setActionError(msg.message || "You were banned from this room.");
+        } else {
+          removeGC(msg.groupChatId);
+        }
+        return;
+      }
+      // A room rename is broadcast to everyone; keep the saved list + any
+      // open board tabs in sync.
+      if (msg.type === "renameRoom" && msg.groupChatId != null && msg.name) {
+        renameSavedGC(msg.groupChatId, msg.name);
+        window.dispatchEvent(
+          new CustomEvent(ROOM_RENAMED_EVENT, {
+            detail: { id: msg.groupChatId, name: msg.name },
+          })
+        );
+        handleWSMessage(msg);
+        return;
+      }
       handleWSMessage(msg);
     },
     [handleWSMessage, activeGCId]
@@ -66,7 +95,7 @@ export default function ChatPage() {
       file?: FileAttachment | null,
       replyToId?: number | null
     ) => {
-      if (!activeGCId) return;
+      if (activeGCId === null) return;
       // The server sets displayNameText from the authenticated session, so we
       // don't send a client-supplied name (prevents identity spoofing). The
       // reply target is resolved + quoted server-side too.
@@ -88,18 +117,17 @@ export default function ChatPage() {
 
   const handleSelectGC = useCallback(async (id: number) => {
     setActionError("");
-    setActiveGCId(id);
-    // Join the room (idempotent for existing members). Failure is surfaced
-    // as an error banner but does not block the room from opening.
     try {
       await joinRoom(id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not join room");
+      removeGC(id);
+      return;
     }
-    // On mobile, auto-close sidebar
-    if (window.innerWidth < 768) {
-      setSidebarVisible(false);
-    }
+    setActiveGCId(id);
+    // Deliberately keep the sidebar open: closing it on room select made a
+    // single click feel fine but a double-click (two room opens) feel like
+    // the sidebar vanished, and reopening it later could squeeze the chat.
   }, []);
 
   // Only the room's creator may delete it.
@@ -109,7 +137,7 @@ export default function ChatPage() {
   const viewerIsStaff = !!user?.isAdmin || !!(gcInfo as any)?.viewer_is_staff;
 
   const handleDeleteRoom = useCallback(async () => {
-    if (!activeGCId) return;
+    if (activeGCId === null) return;
     if (
       !window.confirm(
         `Delete room "${gcName}"? All of its messages will be removed.`
@@ -128,7 +156,7 @@ export default function ChatPage() {
   }, [activeGCId, gcName]);
 
   const handleLeaveRoom = useCallback(async () => {
-    if (!activeGCId) return;
+    if (activeGCId === null) return;
     if (!window.confirm(`Leave room "${gcName}"?`)) return;
     try {
       await leaveRoom(activeGCId);
@@ -154,10 +182,25 @@ export default function ChatPage() {
     [editMessage]
   );
 
+  const handleRenameRoom = useCallback(
+    async (name: string) => {
+      if (activeGCId === null) return;
+      try {
+        await renameRoom(activeGCId, name);
+        setActionError("");
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? err.message : "Failed to rename room"
+        );
+      }
+    },
+    [activeGCId]
+  );
+
   // Slash command handler: delegates to the roomCommand API.
   const handleSlashCommand = useCallback(
     async (command: string, arg: string) => {
-      if (!activeGCId) return;
+      if (activeGCId === null) return;
       setActionError("");
       // join/leave are handled client-side.
       if (command === "join") {
@@ -169,10 +212,15 @@ export default function ChatPage() {
         await handleLeaveRoom();
         return;
       }
+      // /help is sent via WebSocket so the server builds the message.
+      if (command === "help") {
+        const page = parseInt(arg, 10) || 1;
+        send(JSON.stringify({ type: "help", groupChatId: activeGCId, page }));
+        return;
+      }
       try {
         const res = await roomCommand(activeGCId, command, arg);
         setActionError("");
-        // Optional: flash a success message.
         console.log("[roomCommand]", res.message);
       } catch (err) {
         setActionError(
@@ -180,7 +228,7 @@ export default function ChatPage() {
         );
       }
     },
-    [activeGCId, handleSelectGC, handleLeaveRoom]
+    [activeGCId, send, handleSelectGC, handleLeaveRoom]
   );
 
   // Room link handler from [#12345] in messages.
@@ -194,7 +242,7 @@ export default function ChatPage() {
   // Mod action from the name-click context menu.
   const handleModAction = useCallback(
     async (username: string, action: string) => {
-      if (!activeGCId) return;
+      if (activeGCId === null) return;
       setActionError("");
       try {
         const res = await roomCommand(activeGCId, action, username);
@@ -327,7 +375,8 @@ export default function ChatPage() {
         activeGCId={activeGCId}
         onSelectGC={handleSelectGC}
         onEditProfile={handleEditProfile}
-        className={sidebarVisible ? "w-[240px] flex-shrink-0" : "hidden"}
+        onToggleSidebar={() => setSidebarVisible((v) => !v)}
+        className={sidebarVisible ? "w-[264px] flex-shrink-0" : "hidden"}
       />
       {!sidebarVisible && (
         <button
@@ -383,6 +432,8 @@ export default function ChatPage() {
           onSlashCommand={handleSlashCommand}
           onJoinRoom={handleJoinRoom}
           onModAction={handleModAction}
+          onRenameRoom={handleRenameRoom}
+          roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
           currentUserId={user?.id ?? null}
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
@@ -399,6 +450,7 @@ export default function ChatPage() {
       <ProfileModal
         username={profileUser}
         initialEditing={profileEditing}
+        activeGCId={activeGCId}
         onClose={handleCloseProfile}
       />
     </div>

@@ -9,6 +9,8 @@ interface Props {
   username: string | null;
   /** When true and viewing yourself, start in edit mode. */
   initialEditing?: boolean;
+  /** Current room id, for displaying owner/admin badges. */
+  activeGCId?: number | null;
   onClose: () => void;
 }
 
@@ -19,6 +21,7 @@ interface Props {
 export default function ProfileModal({
   username,
   initialEditing = false,
+  activeGCId,
   onClose,
 }: Props) {
   const { user, refresh } = useAuth();
@@ -36,7 +39,7 @@ export default function ProfileModal({
     let cancelled = false;
     setProfile(null);
     setError("");
-    getProfile(username)
+    getProfile(username, activeGCId)
       .then((p) => {
         if (cancelled) return;
         setProfile(p);
@@ -50,7 +53,7 @@ export default function ProfileModal({
     return () => {
       cancelled = true;
     };
-  }, [username, initialEditing, isSelf]);
+  }, [username, activeGCId, initialEditing, isSelf]);
 
   if (!username) return null;
 
@@ -111,11 +114,23 @@ export default function ProfileModal({
             <div className="flex items-center gap-3">
               <Avatar name={profile.username} src={profile.picture_url} size={56} />
               <div>
-                <div
-                  data-testid="profile-username"
-                  className="text-[var(--text-primary)] text-sm"
-                >
-                  {profile.username}
+                <div className="flex items-center gap-2">
+                  <div
+                    data-testid="profile-username"
+                    className="text-[var(--text-primary)] text-sm"
+                  >
+                    {profile.username}
+                  </div>
+                  {profile.isAdmin && (
+                    <span className="text-[10px] border px-1 py-0.5 border-[var(--error)] text-[var(--error)]">
+                      ADMIN
+                    </span>
+                  )}
+                  {profile.isRoomOwner && (
+                    <span className="text-[10px] border px-1 py-0.5 border-[var(--accent)] text-[var(--accent)]">
+                      OWNER
+                    </span>
+                  )}
                 </div>
                 <div className="text-[var(--text-muted)] text-[10px] uppercase tracking-widest">
                   bio

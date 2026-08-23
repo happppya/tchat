@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
+import { uniqueGcId, resetApp, signUp, signUpAdmin, createGroupChat } from "./helpers";
 
 /**
  * Room visibility tests: public rooms are discoverable in the rooms tab and
@@ -17,12 +17,12 @@ test("public rooms are listed in the rooms tab; private rooms are not", async ({
 }) => {
   const privId = UNIQUE_GC();
   const pubId = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
 
   await createGroupChat(page, privId, "Private Room");
   await createGroupChat(page, pubId, "Public Room", true);
 
-  await page.click('[data-testid="tab-rooms"]');
+  await page.click('[data-testid="tab-board"]');
 
   await expect(page.locator(`[data-testid="public-room-${pubId}"]`)).toBeVisible();
   await expect(
@@ -39,11 +39,11 @@ test("a user can join a public room from the rooms tab", async ({ browser }) => 
   const bob = await bobContext.newPage();
 
   try {
-    await signUp(alice);
+    await signUpAdmin(alice);
     await createGroupChat(alice, pubId, "Discoverable Room", true);
 
     await signUp(bob);
-    await bob.click('[data-testid="tab-rooms"]');
+    await bob.click('[data-testid="tab-board"]');
     await expect(bob.locator(`[data-testid="public-room-${pubId}"]`)).toBeVisible();
 
     await bob.click(`[data-testid="public-room-${pubId}"]`);

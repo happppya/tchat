@@ -89,6 +89,9 @@ export async function runMigrations(db: DB): Promise<void> {
   // Anonymous (random display names, no profiles), Transparent (default).
   await ensureGroupChatsTypeColumns(db);
 
+  // Public/private flag: public rooms appear on the board, private are code-only.
+  await ensureGroupChatsPublicColumn(db);
+
   // Role tables: site admins, room moderators, bans, mutes.
   await ensureUsersAdminColumn(db);
   await ensureRoomModeratorsTable(db);
@@ -119,6 +122,10 @@ export async function runMigrations(db: DB): Promise<void> {
 
   // Seed Room 0 (the directory lobby) during migration so it's always present.
   await seedRoomZero(db);
+
+  // Board groups: admin-curated groupings of public rooms on the board tab.
+  await ensureBoardGroupsTable(db);
+  await ensureBoardGroupRoomsTable(db);
 }
 
 /**
@@ -197,6 +204,21 @@ async function ensureGroupChatsEmptiedAtColumn(db: DB): Promise<void> {
     }
   } catch (err) {
     console.error('group_chats emptied_at migration failed:', (err as Error).message);
+  }
+}
+
+/** is_public flag: public rooms appear on the board; private rooms are code-only. */
+async function ensureGroupChatsPublicColumn(db: DB): Promise<void> {
+  try {
+    const cols = await db.all('PRAGMA table_info(group_chats)');
+    if (!cols.some((c) => c.name === 'is_public')) {
+      await db.exec(
+        'ALTER TABLE group_chats ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0'
+      );
+      console.log('group_chats table migrated: added is_public');
+    }
+  } catch (err) {
+    console.error('group_chats is_public migration failed:', (err as Error).message);
   }
 }
 
@@ -536,9 +558,9 @@ export async function isRoomMember(
 export async function getUserRooms(
   db: DB,
   userId: number
-): Promise<Array<{ id: number; name: string; is_hidden: number; is_readonly: number; is_anonymous: number; is_transparent: number }>> {
+): Promise<Array<{ id: number; name: string; is_hidden: number; is_readonly: number; is_anonymous: number; is_transparent: number; is_public: number }>> {
   return db.all(
-    `SELECT g.id, g.name, g.is_hidden, g.is_readonly, g.is_anonymous, g.is_transparent
+    `SELECT g.id, g.name, g.is_hidden, g.is_readonly, g.is_anonymous, g.is_transparent, g.is_public
      FROM group_chats g
      JOIN room_members m ON m.room_id = g.id
      WHERE m.user_id = ?
@@ -608,12 +630,13 @@ export async function createGroupChat(
   password_hash: string | null = null,
   is_readonly: number | boolean = 0,
   is_anonymous: number | boolean = 0,
-  is_transparent: number | boolean = 0
+  is_transparent: number | boolean = 0,
+  is_public: number | boolean = 0
 ): Promise<void> {
   await db.run(
     `INSERT INTO group_chats (id, name, owner_user_id,
-      is_hidden, password_hash, is_readonly, is_anonymous, is_transparent)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      is_hidden, password_hash, is_readonly, is_anonymous, is_transparent, is_public)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       gc_id,
       gc_name,
@@ -623,6 +646,7 @@ export async function createGroupChat(
       is_readonly ? 1 : 0,
       is_anonymous ? 1 : 0,
       is_transparent ? 1 : 0,
+      is_public ? 1 : 0,
     ]
   );
   const flags: string[] = [];
@@ -636,10 +660,8 @@ export async function createGroupChat(
 }
 
 export async function destroyGroupChat(db: DB, gc_id: number): Promise<void> {
-  if (gc_id === 0) {
-    console.log('Room 0 cannot be deleted');
-    return;
-  }
+  // Authorization is handled by the route layer; admins may delete any room
+  // including Room 0.
   // Reactions have no FK cascade, so clear them before the messages vanish.
   await db.run(
     'DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE group_chat_id = ?)',
@@ -651,6 +673,7 @@ export async function destroyGroupChat(db: DB, gc_id: number): Promise<void> {
   await db.run('DELETE FROM room_bans WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM room_mutes WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM room_anon_names WHERE room_id = ?', [gc_id]);
+  await db.run('DELETE FROM board_group_rooms WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM group_chats WHERE id = ?', [gc_id]);
   console.log(`GC destroyed: (ID: ${gc_id})`);
 }
@@ -663,6 +686,8 @@ export async function clearAllGroupChats(db: DB): Promise<void> {
   await db.run(`DELETE FROM message_reactions`);
   await db.run(`DELETE FROM messages`);
   await db.run(`DELETE FROM room_members`);
+  await db.run(`DELETE FROM board_group_rooms`);
+  await db.run(`DELETE FROM board_groups`);
   await db.run(`DELETE FROM group_chats WHERE id != 0`);
   console.log(`All GCs destroyed (Room 0 preserved)`);
 }
@@ -793,11 +818,133 @@ export function randomAnonName(): string {
 export async function seedRoomZero(db: DB): Promise<void> {
   const row = await db.get('SELECT id FROM group_chats WHERE id = 0');
   if (row) return;
-  // Room 0 has no owner — it's the system room.
+  // Room 0 has no owner — it's the system room. Public by default.
   await db.run(
-    "INSERT INTO group_chats (id, name, is_transparent) VALUES (0, 'Lobby', 1)"
+    "INSERT INTO group_chats (id, name, is_transparent, is_public) VALUES (0, 'Lobby', 1, 1)"
   );
   console.log('Room 0 seeded');
+}
+
+// ---------------------------------------------------------------------------
+// Board groups — admin-curated groupings on the board tab
+// ---------------------------------------------------------------------------
+
+async function ensureBoardGroupsTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS board_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL DEFAULT '',
+        position INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+  } catch (err) {
+    console.error('board_groups migration failed:', (err as Error).message);
+  }
+}
+
+async function ensureBoardGroupRoomsTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS board_group_rooms (
+        group_id INTEGER NOT NULL,
+        room_id INTEGER NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (group_id, room_id)
+      );
+    `);
+  } catch (err) {
+    console.error('board_group_rooms migration failed:', (err as Error).message);
+  }
+}
+
+/** Fetch all board groups with their room ids. */
+export async function getBoardGroups(
+  db: DB
+): Promise<Array<{ id: number; name: string; position: number; roomIds: number[] }>> {
+  const groups = await db.all(
+    'SELECT id, name, position FROM board_groups ORDER BY position, id'
+  );
+  const result: Array<{ id: number; name: string; position: number; roomIds: number[] }> = [];
+  for (const g of groups) {
+    const rooms = await db.all(
+      'SELECT room_id FROM board_group_rooms WHERE group_id = ? ORDER BY position, room_id',
+      [g.id]
+    );
+    result.push({
+      id: g.id,
+      name: g.name,
+      position: g.position,
+      roomIds: rooms.map((r) => r.room_id),
+    });
+  }
+  return result;
+}
+
+/** Create a new board group. */
+export async function createBoardGroup(db: DB, name: string): Promise<number> {
+  const maxPos = await db.get('SELECT MAX(position) AS maxPos FROM board_groups');
+  const pos = (maxPos?.maxPos ?? -1) + 1;
+  const result = await db.run(
+    'INSERT INTO board_groups (name, position) VALUES (?, ?)',
+    [name, pos]
+  );
+  return Number(result.lastID);
+}
+
+/** Rename a board group. */
+export async function renameBoardGroup(db: DB, id: number, name: string): Promise<void> {
+  await db.run('UPDATE board_groups SET name = ? WHERE id = ?', [name, id]);
+}
+
+/** Delete a board group (rooms spill to top level). */
+export async function deleteBoardGroup(db: DB, id: number): Promise<void> {
+  await db.run('DELETE FROM board_group_rooms WHERE group_id = ?', [id]);
+  await db.run('DELETE FROM board_groups WHERE id = ?', [id]);
+}
+
+/** Add a room to a board group. */
+export async function addRoomToBoardGroup(
+  db: DB,
+  groupId: number,
+  roomId: number
+): Promise<void> {
+  // Remove from any existing group first.
+  await db.run('DELETE FROM board_group_rooms WHERE room_id = ?', [roomId]);
+  const maxPos = await db.get(
+    'SELECT MAX(position) AS maxPos FROM board_group_rooms WHERE group_id = ?',
+    [groupId]
+  );
+  await db.run(
+    'INSERT OR REPLACE INTO board_group_rooms (group_id, room_id, position) VALUES (?, ?, ?)',
+    [groupId, roomId, (maxPos?.maxPos ?? -1) + 1]
+  );
+}
+
+/** Remove a room from its board group (spills to top level). */
+export async function removeRoomFromBoardGroup(db: DB, roomId: number): Promise<void> {
+  await db.run('DELETE FROM board_group_rooms WHERE room_id = ?', [roomId]);
+}
+
+/** Reorder board groups to match the given id order. */
+export async function reorderBoardGroups(db: DB, ids: number[]): Promise<void> {
+  for (let i = 0; i < ids.length; i++) {
+    await db.run('UPDATE board_groups SET position = ? WHERE id = ?', [i, ids[i]]);
+  }
+}
+
+/** Reorder rooms within a board group. */
+export async function reorderBoardGroupRooms(
+  db: DB,
+  groupId: number,
+  roomIds: number[]
+): Promise<void> {
+  for (let i = 0; i < roomIds.length; i++) {
+    await db.run(
+      'UPDATE board_group_rooms SET position = ? WHERE group_id = ? AND room_id = ?',
+      [i, groupId, roomIds[i]]
+    );
+  }
 }
 
 export interface Reaction {

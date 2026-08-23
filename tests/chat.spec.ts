@@ -3,6 +3,7 @@ import {
   uniqueGcId,
   resetApp,
   signUp,
+  signUpAdmin,
   createGroupChat,
   sendMessage,
 } from "./helpers";
@@ -28,7 +29,7 @@ test.beforeEach(async ({ page }) => {
 test("creates a group chat and shows it in the sidebar", async ({ page }) => {
   const id = UNIQUE_GC();
   const name = "Test Room";
-  await signUp(page);
+  await signUpAdmin(page);
 
   await createGroupChat(page, id, name);
 
@@ -46,7 +47,7 @@ test("creates a group chat and shows it in the sidebar", async ({ page }) => {
 // ---------------------------------------------------------------------------
 test("sends a message and sees it appear at the bottom", async ({ page }) => {
   const id = UNIQUE_GC();
-  const username = await signUp(page);
+  const username = await signUpAdmin(page);
   await createGroupChat(page, id, "Send Room");
 
   await sendMessage(page, "Hello, world!");
@@ -64,7 +65,7 @@ test("sends a message and sees it appear at the bottom", async ({ page }) => {
 // ---------------------------------------------------------------------------
 test("only one message appears per send (no duplicates)", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "NoDupe Room");
 
   await sendMessage(page, "Unique message");
@@ -82,7 +83,7 @@ test("messages are ordered oldest-first (top to bottom) live and after refresh",
   page,
 }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Order Room");
 
   // Send three messages as the same user. They collapse into one group but
@@ -136,7 +137,7 @@ test("real-time: messages sent in one tab appear in another", async ({ browser }
   try {
   // Alice creates the GC; Bob joins the same freshly-created GC. Each has
   // their own account/session.
-  await signUp(alice);
+  await signUpAdmin(alice);
   await createGroupChat(alice, id, name);
 
   // Seed Bob's localStorage BEFORE first navigation so the sidebar button is
@@ -177,7 +178,7 @@ test("real-time: messages sent in one tab appear in another", async ({ browser }
 // ---------------------------------------------------------------------------
 test("messages persist across a page reload", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Persist Room");
   await sendMessage(page, "persisted hello");
 
@@ -201,7 +202,7 @@ test("messages persist across a page reload", async ({ page }) => {
 // ---------------------------------------------------------------------------
 test("creating a room with an existing code shows an error", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Original Room");
 
   // Try to create a second room with the same code.
@@ -219,7 +220,7 @@ test("creating a room with an existing code shows an error", async ({ page }) =>
 // 8. Room codes have a max length
 // ---------------------------------------------------------------------------
 test("room code input is capped at 6 digits", async ({ page }) => {
-  await signUp(page);
+  await signUpAdmin(page);
   await page.click('[data-testid="create-gc-toggle"]');
   await page.fill('[data-testid="create-gc-id"]', "123456789");
 
@@ -231,7 +232,7 @@ test("room code input is capped at 6 digits", async ({ page }) => {
 // ---------------------------------------------------------------------------
 test("room owner can delete the room", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Doomed Room");
 
   await expect(page.locator('[data-testid="delete-room-button"]')).toBeVisible();
@@ -255,7 +256,7 @@ test("a non-owner cannot delete a room", async ({ browser }) => {
   const joiner = await joinerContext.newPage();
 
   try {
-    await signUp(owner);
+    await signUpAdmin(owner);
     await createGroupChat(owner, id, "Shared Room");
 
     await signUp(joiner);
@@ -275,7 +276,7 @@ test("a non-owner cannot delete a room", async ({ browser }) => {
 // ---------------------------------------------------------------------------
 test("a user can leave a room", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Temporary Room");
 
   await expect(page.locator('[data-testid="leave-room-button"]')).toBeVisible();
@@ -298,7 +299,7 @@ test("leaving a room keeps other members in it", async ({ browser }) => {
   const bob = await bobContext.newPage();
 
   try {
-    await signUp(alice);
+    await signUpAdmin(alice);
     await createGroupChat(alice, id, "Shared Room");
 
     await signUp(bob);
@@ -332,7 +333,7 @@ test("rooms load from the server on a fresh device", async ({ browser }) => {
   const device2 = await ctx2.newPage();
 
   try {
-    await signUp(device1, username);
+    await signUpAdmin(device1, username);
     await createGroupChat(device1, id, "Cloud Room");
 
     // Same account, different context (no localStorage): log in and expect the
@@ -341,7 +342,7 @@ test("rooms load from the server on a fresh device", async ({ browser }) => {
     await device2.fill('input[placeholder="user"]', username);
     await device2.fill('input[placeholder="••••••••"]', "password123");
     await device2.click('button[type="submit"]');
-    await expect(device2.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+    await expect(device2.locator('[data-testid="room-code-input"]')).toBeVisible();
 
     await expect(device2.locator(`[data-testid="gc-button-${id}"]`)).toBeVisible();
   } finally {
@@ -355,7 +356,7 @@ test("rooms load from the server on a fresh device", async ({ browser }) => {
 // ---------------------------------------------------------------------------
 test("empty rooms are automatically deleted", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Ephemeral Room");
 
   page.on("dialog", (d) => d.accept());

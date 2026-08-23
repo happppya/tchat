@@ -21,13 +21,13 @@ src/
 │   ├── Avatar.tsx         # Picture image with initials fallback
 │   ├── ChatWindow.tsx     # Chat area: header, list, composer, reply state
 │   ├── CommandPalette.tsx # Backtick-launched command menu (themes, actions)
-│   ├── CreateGroupChat.tsx# New-room form (code, name, public/private)
+│   ├── CreateGroupChat.tsx# New-room form (code, name, type toggles)
 │   ├── GifPicker.tsx      # GIPHY search overlay
-│   ├── Markdown.tsx       # Safe markdown renderer (code blocks, links)
-│   ├── MessageBubble.tsx  # Message groups: quotes, reactions, edit/delete
-│   ├── MessageComposer.tsx# Input + upload/GIF + reply preview
-│   ├── ProfileModal.tsx   # View/edit profiles
-│   └── Sidebar.tsx        # Channels/rooms tabs + join input
+│   ├── Markdown.tsx       # Safe markdown renderer (code blocks, links, room links)
+│   ├── MessageBubble.tsx  # Message groups: quotes, reactions, edit/delete, staff menu
+│   ├── MessageComposer.tsx# Input + upload/GIF + reply preview + slash popover
+│   ├── ProfileModal.tsx   # View/edit profiles (shows admin/owner badges)
+│   └── Sidebar.tsx        # My Rooms / Board tabs, groups, drag-and-drop, join input
 ├── hooks/                 # Custom React hooks
 │   ├── useAuth.ts         # Global auth store (session check, login/logout)
 │   ├── useGifSearch.ts    # GIF search state
@@ -46,7 +46,7 @@ src/
 │   └── cli.ts             # Readline admin CLI
 ├── services/
 │   ├── api.ts             # Typed REST client (shared request helper)
-│   └── storage.ts         # localStorage helpers for cached rooms
+│   └── storage.ts         # localStorage helpers for cached rooms + local groups
 ├── themes/
 │   ├── themes.ts          # Theme definitions
 │   └── useTheme.ts        # Theme store + CSS-variable application
@@ -104,32 +104,92 @@ The backend is TypeScript compiled to CommonJS into `dist-server/` via
 
 ## API Endpoints
 
-| Method | Path                    | Auth | Description                          |
-| ------ | ----------------------- | ---- | ------------------------------------ |
-| GET    | `/api/health`           | no   | Liveness check                       |
-| POST   | `/api/signup`           | no   | Create account + session             |
-| POST   | `/api/login`            | no   | Create session                       |
-| POST   | `/api/logout`           | no   | Destroy session                      |
-| GET    | `/api/me`               | yes  | Current user (id, username, bio, pic)|
-| GET    | `/api/profile/:username`| yes  | Public profile                       |
-| PUT    | `/api/profile`          | yes  | Update own bio + picture             |
-| POST   | `/api/createGC`         | yes  | Create room (`id`, `name`, `isPublic`)|
-| GET    | `/api/getGCInfo`        | yes  | Room info by `groupChatId`           |
-| DELETE | `/api/deleteGC`         | yes  | Delete room (owner only)             |
-| GET    | `/api/myRooms`          | yes  | Rooms the current user is in         |
-| GET    | `/api/publicRooms`      | yes  | Discoverable public rooms            |
-| POST   | `/api/joinRoom`         | yes  | Join room by `groupChatId` (idempotent)|
-| POST   | `/api/leaveRoom`        | yes  | Leave room                           |
-| GET    | `/api/getMessages`      | yes  | Paged messages (cursor-based)        |
-| PUT    | `/api/editMessage`      | yes  | Edit own message text                |
-| DELETE | `/api/deleteMessage`    | yes  | Delete own message                   |
-| POST   | `/api/reactToMessage`   | yes  | Toggle emoji reaction                |
-| POST   | `/api/upload`           | yes  | Upload a small file (base64 data URL)|
-| GET    | `/api/searchGifs`       | yes  | GIPHY search                         |
+| Method | Path                         | Auth | Description                                  |
+| ------ | ---------------------------- | ---- | -------------------------------------------- |
+| GET    | `/api/health`                | no   | Liveness check                               |
+| POST   | `/api/signup`                | no   | Create account + session (auto-joins Room 0) |
+| POST   | `/api/login`                 | no   | Create session (auto-joins Room 0)           |
+| POST   | `/api/logout`                | no   | Destroy session                              |
+| GET    | `/api/me`                    | yes  | Current user (id, username, isAdmin, bio, pic)|
+| GET    | `/api/profile/:username`     | yes  | Public profile (isAdmin, isRoomOwner badges) |
+| PUT    | `/api/profile`               | yes  | Update own bio + picture                     |
+| POST   | `/api/createGC`              | yes  | Create room (admin only). Body: `id`, `name`, `isHidden`, `password`, `isReadonly`, `isAnonymous`, `isTransparent`, `isPublic` |
+| GET    | `/api/getGCInfo`             | yes  | Room info by `groupChatId`. Includes `viewer_is_staff`. Strips `password_hash` from non-admins. |
+| DELETE | `/api/deleteGC`              | yes  | Delete room (owner or admin). Admins can delete Room 0. Broadcasts `deleteRoom`. |
+| GET    | `/api/myRooms`               | yes  | Rooms the current user is a member of        |
+| GET    | `/api/publicRooms`           | yes  | Public rooms (`is_public = 1`) for the board |
+| POST   | `/api/joinRoom`              | yes  | Join room by `groupChatId` + optional `password`. Idempotent. Admins bypass ban/password. |
+| POST   | `/api/leaveRoom`             | yes  | Leave room (not Room 0)                      |
+| GET    | `/api/getMessages`           | yes  | Paged messages (cursor-based). Anon rooms strip `user_id` for non-admins. |
+| PUT    | `/api/editMessage`           | yes  | Edit own message (admin can edit any)        |
+| DELETE | `/api/deleteMessage`         | yes  | Delete own message (admin can delete any)    |
+| POST   | `/api/reactToMessage`        | yes  | Toggle emoji reaction                        |
+| POST   | `/api/roomCommand`           | yes  | Moderation: `kick`, `ban`, `unban`, `mute`, `unmute`, `mod`, `demod` with `targetUsername` |
+| POST   | `/api/upload`                | yes  | Upload a small file (base64 data URL)        |
+| GET    | `/api/searchGifs`            | yes  | GIPHY search                                 |
+| GET    | `/api/boardGroups`           | yes  | Board groups with room ids                   |
+| POST   | `/api/boardGroups`           | yes  | Create board group (admin only)              |
+| PUT    | `/api/boardGroups/:id`       | yes  | Rename board group (admin only)              |
+| DELETE | `/api/boardGroups/:id`       | yes  | Delete board group (admin only)              |
+| POST   | `/api/boardGroups/reorder`   | yes  | Reorder board groups (admin only)            |
+| POST   | `/api/boardGroups/:id/rooms` | yes  | Add room to board group (admin only)         |
+| DELETE | `/api/boardGroups/rooms/:roomId` | yes | Remove room from board group (admin only) |
+| POST   | `/api/boardGroups/:id/reorder-rooms` | yes | Reorder rooms within a group (admin only) |
 
 `GET /api/getMessages` query params: `groupChatId`, `limit` (1–100, default
 50), and optional `beforeSentAt` + `beforeId` (must be supplied together) for
 the previous page.
+
+## Room types
+
+Rooms have non-exclusive flags set at creation time (admin only):
+
+| Flag           | Column           | Effect                                              |
+| -------------- | ---------------- | --------------------------------------------------- |
+| Hidden         | `is_hidden`      | Requires a password (`>8` chars) to join            |
+| Readonly       | `is_readonly`    | Only admins can speak (muted for everyone else)     |
+| Anonymous      | `is_anonymous`   | Random display names, profiles hidden, userId stripped for non-admins |
+| Transparent    | `is_transparent` | Standard names (default behavior)                   |
+| Public         | `is_public`      | Appears on the board tab; private rooms are code-only |
+
+Hidden rooms are excluded from `/publicRooms` regardless of `is_public`.
+
+Room rows in the sidebar show shorthand type tags derived from `roomTypeTags`
+(`src/utils/roomTypes.ts`): `[A]` anonymous, `[H]` hidden, `[R]` readonly,
+`[T]` transparent, `[P]` public. The active room's chat header shows the full
+names ("anonymous", "readonly", …). The shorthand never changes without the
+header name — both come from the same ordered list.
+
+Rooms can be renamed by the room owner or any admin (mirrored client-side by
+`canRenameRoom` in `src/utils/roomPerms.ts`): an ✎ button appears on hover in
+both the sidebar and the chat header. PUT `/renameRoom` broadcasts a
+`renameRoom` WS message; clients update the saved list (`renameSavedGC`),
+the chat header, and the board list.
+
+## Role system
+
+- **Site admins** — `users.is_admin = 1`. Set manually via SQL. Immune to all
+  room-level moderation. Can create rooms, delete any room, edit/delete any
+  message, see userIds in anonymous rooms, manage board groups.
+- **Room owners** — `group_chats.owner_user_id`. Created the room. Can delete
+  it, promote/demote moderators.
+- **Room moderators** — `room_moderators` table. Elevated by owners/admins.
+  Can kick, ban, mute. Cannot promote/demote others.
+- **Admins + owners + mods** = "room staff" (`viewer_is_staff` in `getGCInfo`).
+
+## Groups (sidebar)
+
+Two independent group systems:
+
+- **Local groups** ("my rooms" tab) — stored in `localStorage` under
+  `tchat:local-groups`. Created with Shift+G or `[ +group ]`. Drag rooms
+  in/out, reorder rooms and groups, rename, delete (rooms spill to top
+  level). Folds with ▸/▾ toggle. Rooms are removed from the list via a
+  hover delete button (✕) — there is no right-click delete.
+- **Board groups** ("board" tab) — stored server-side in `board_groups` +
+  `board_group_rooms`. Admin-only mutations via the board group API. Same
+  drag-and-drop UX as local groups. Creating a board group has no keyboard
+  shortcut.
 
 ## WebSocket protocol
 
@@ -148,10 +208,20 @@ Client → server:
 
 Server → client:
 
-- `message` — a stored message (includes real `id`, `userId`, `displayNameText`,
-  `avatarUrl`, `timestamp`, and reply fields)
-- `editMessage` — `{ messageId, messageText, editedAt }`
-- `deleteMessage` — `{ messageId }`
-- `messageReactions` — `{ messageId, reactions: [{ emoji, count, me }] }`
-- `error` — `{ messageText }`
+- `message` — a stored message (includes real `id`, `userId`, `username`,
+  `displayNameText`, `avatarUrl`, `timestamp`, `speaker`, and reply fields)
+- `editMessage` — `{ groupChatId, messageId, messageText, editedAt }`
+- `deleteMessage` — `{ groupChatId, messageId }`
+- `deleteRoom` — `{ groupChatId }` (broadcast when a room is deleted)
+- `kicked` — `{ groupChatId, message }` (sent to the kicked user only)
+- `banned` — `{ groupChatId, message }` (sent to the banned user only)
+- `messageReactions` — `{ groupChatId, messageId, reactions: [{ emoji, count, me }] }`
+- `error` — `{ message: string }`
 - `pong`
+
+`speaker` is `null` for normal users and `"sys"` for system messages (e.g.
+`/help` output). The client renders a verified badge for non-null speakers.
+
+Client → server additions:
+
+- `{ type: "help", groupChatId, page }` — requests paged command help from the system bot

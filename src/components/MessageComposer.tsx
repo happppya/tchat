@@ -7,18 +7,23 @@ import type { FileAttachment, ReplyTarget } from "../types";
 import GifPicker from "./GifPicker";
 import Avatar from "./Avatar";
 
-/** Available slash commands with argument hints. */
-const SLASH_COMMANDS: Record<string, string> = {
-  "/kick": "@username",
-  "/ban": "@username",
-  "/unban": "@username",
-  "/mute": "@username",
-  "/unmute": "@username",
-  "/mod": "@username",
-  "/demod": "@username",
-  "/join": "#roomcode",
-  "/leave": "",
-};
+/** Commands: key -> argument hint. */
+const ALL_COMMANDS: [string, string][] = [
+  ["/kick", "@username"],
+  ["/ban", "@username"],
+  ["/unban", "@username"],
+  ["/mute", "@username"],
+  ["/unmute", "@username"],
+  ["/mod", "@username"],
+  ["/demod", "@username"],
+  ["/join", "#roomcode"],
+  ["/leave", ""],
+  ["/help", "[page]"],
+];
+const COMMANDS_BY_PREFIX = new Map<string, string>(
+  ALL_COMMANDS.map(([k, v]) => [k, v])
+);
+const ALL_COMMAND_NAMES = ALL_COMMANDS.map(([k]) => k);
 
 interface Props {
   onSend: (
@@ -30,6 +35,8 @@ interface Props {
   /** The message currently being replied to, if any. */
   replyTo?: ReplyTarget | null;
   onCancelReply?: () => void;
+  /** Unique display names in the room, for @username autocomplete. */
+  memberNames?: string[];
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -46,6 +53,7 @@ export default function MessageComposer({
   replyTo,
   onCancelReply,
   onSlashCommand,
+  memberNames = [],
 }: Props) {
   const { user } = useAuth();
   const [text, setText] = useState("");
@@ -56,28 +64,72 @@ export default function MessageComposer({
   const [error, setError] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [popIndex, setPopIndex] = useState(0);
 
-  // The display name is the authenticated username — the server enforces this,
-  // so clients cannot spoof another user's identity.
   const promptName = user?.username ?? "guest";
 
-  // Detect whether the user is typing a slash command.
-  const slashMatch = useMemo(() => {
+  // Parse the current input: is it a slash command? Command part? Argument?
+  const slashState = useMemo(() => {
     if (!text.startsWith("/")) return null;
     const space = text.indexOf(" ");
     const cmd = space === -1 ? text : text.slice(0, space);
     const arg = space === -1 ? "" : text.slice(space + 1);
-    if (SLASH_COMMANDS[cmd] !== undefined) return { cmd, arg, hint: SLASH_COMMANDS[cmd] };
-    return null;
+    const exact = COMMANDS_BY_PREFIX.get(cmd);
+    return { cmd, arg, exact, hint: exact !== undefined ? exact : null };
   }, [text]);
+
+  // Build the autocomplete popover items.
+  const popItems: { id: string; label: string; secondary?: string }[] =
+    useMemo(() => {
+      if (!slashState) return [];
+      const { cmd, arg, exact, hint } = slashState;
+
+      // Phase 1: command not fully typed yet (no space). Show matching commands.
+      if (arg === "" && !exact) {
+        return ALL_COMMAND_NAMES
+          .filter((c) => c.startsWith(cmd))
+          .map((c) => {
+            const h = COMMANDS_BY_PREFIX.get(c);
+            return h ? { id: c, label: c, secondary: h } : { id: c, label: c };
+          });
+      }
+
+      // Phase 2: command is exact, hint is @username — show matching members.
+      if (exact && hint === "@username") {
+        const atIdx = arg.indexOf("@");
+        if (atIdx === -1) {
+          // No @ typed yet — show "@username" placeholder.
+          return [{ id: "@", label: "@username" }];
+        }
+        const query = arg.slice(atIdx + 1).toLowerCase();
+        const filtered = memberNames
+          .filter((n) => n.toLowerCase().includes(query))
+          .slice(0, 8);
+        if (filtered.length === 0) {
+          return [{ id: "", label: "no matches" }];
+        }
+        return filtered.map((n) => ({ id: arg.slice(0, atIdx + 1) + n, label: n }));
+      }
+
+      // Phase 3: command is exact, hint is #roomcode — show hint.
+      if (exact && hint === "#roomcode") {
+        return [{ id: "#", label: "#roomcode" }];
+      }
+
+      return [];
+    }, [slashState, memberNames]);
+
+  // Clamp popIndex when items change.
+  useEffect(() => {
+    setPopIndex(0);
+  }, [popItems.length]);
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && !gifUrl && !file) return;
 
-    // Intercept slash commands.
-    if (slashMatch && onSlashCommand) {
-      onSlashCommand(slashMatch.cmd.slice(1), slashMatch.arg);
+    if (slashState && onSlashCommand) {
+      onSlashCommand(slashState.cmd.slice(1), slashState.arg);
       setText("");
       return;
     }
@@ -87,14 +139,50 @@ export default function MessageComposer({
     setGifUrl(null);
     setFile(null);
     setError("");
-  }, [text, gifUrl, file, slashMatch, onSend, onSlashCommand]);
+  }, [text, gifUrl, file, slashState, onSend, onSlashCommand]);
+
+  const acceptPopItem = useCallback(
+    (forceIndex?: number) => {
+      if (!slashState || popItems.length === 0) return;
+      const idx = forceIndex ?? popIndex;
+      const item = popItems[idx] ?? popItems[0];
+      if (!item || item.id === "" || item.id === "@") return;
+      const { arg } = slashState;
+
+      if (arg === "" && !slashState.exact) {
+        // Completing a command.
+        setText(item.id + " ");
+      } else {
+        // Completing an argument (username or room code).
+        const beforeArg = text.slice(0, slashState.cmd.length + 1);
+        setText(beforeArg + item.id);
+      }
+    },
+    [slashState, popItems, popIndex, text]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Tab completion for slash commands.
-    if (e.key === "Tab" && slashMatch && !slashMatch.arg) {
-      e.preventDefault();
-      setText(slashMatch.cmd + " ");
-      return;
+    if (popItems.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setPopIndex((i) => (i + 1) % popItems.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setPopIndex((i) => (i - 1 + popItems.length) % popItems.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        acceptPopItem();
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        acceptPopItem();
+        return;
+      }
     }
 
     if (e.key === "Enter" && !e.shiftKey) {
@@ -241,12 +329,28 @@ export default function MessageComposer({
         </div>
       )}
 
-      {/* Slash command hint */}
-      {slashMatch && (
-        <div className="mt-1 text-xs text-[var(--text-muted)] flex items-center gap-2">
-          <span className="text-[var(--accent)]">{slashMatch.cmd}</span>
-          {slashMatch.hint && <span>— {slashMatch.hint}</span>}
-          <span className="ml-auto opacity-50">tab to complete</span>
+      {/* Slash command popover — floats above the textarea */}
+      {popItems.length > 0 && (
+        <div className="absolute bottom-full left-0 right-0 mb-1 z-20">
+          <div className="border border-[var(--accent)] bg-[var(--bg-primary)] max-h-[180px] overflow-y-auto text-xs shadow-lg">
+            {popItems.map((item, i) => (
+              <div
+                key={item.id + i}
+                data-testid={i === popIndex ? "slash-pop-active" : "slash-pop-item"}
+                className={`px-2 py-1 flex items-center gap-3 cursor-pointer ${
+                  i === popIndex
+                    ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+                }`}
+                onClick={() => acceptPopItem(i)}
+              >
+                <span className="flex-1">{item.label}</span>
+                {item.secondary && (
+                  <span className="text-[var(--text-muted)]">{item.secondary}</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

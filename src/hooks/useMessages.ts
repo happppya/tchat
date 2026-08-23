@@ -65,7 +65,7 @@ export function useMessages(groupChatId: number | null) {
 
   // Reload when groupChatId changes
   useEffect(() => {
-    if (groupChatId) {
+    if (groupChatId !== null) {
       loadMessages(groupChatId);
     } else {
       setMessages([]);
@@ -81,7 +81,7 @@ export function useMessages(groupChatId: number | null) {
    * it, so the chat can page backward through history.
    */
   const loadOlder = useCallback(async () => {
-    if (!groupChatId || loadingOlderRef.current) return;
+    if (groupChatId === null || loadingOlderRef.current) return;
     const oldest = messages[0];
     if (!oldest) return;
 
@@ -151,6 +151,10 @@ export function useMessages(groupChatId: number | null) {
         applyReactions(msg.messageId, msg.reactions ?? []);
         return;
       }
+      if (msg.type === "renameRoom" && msg.groupChatId === groupChatId) {
+        if (msg.name) setGcName(msg.name);
+        return;
+      }
       if (msg.type !== "message") return;
 
       const newMsg: Message = {
@@ -159,6 +163,7 @@ export function useMessages(groupChatId: number | null) {
         id: msg.id ?? tempIdRef.current--,
         group_chat_id: msg.groupChatId,
         display_name: msg.displayNameText ?? null,
+        speaker: msg.speaker ?? null,
         username: msg.username ?? null,
         message_text: msg.messageText ?? null,
         gif_url: msg.gifUrl ?? null,

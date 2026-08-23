@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueGcId, resetApp, signUp } from "./helpers";
+import { uniqueGcId, resetApp, signUpAdmin } from "./helpers";
 
 /**
  * Theme switching via the command palette.
@@ -39,7 +39,7 @@ test("switching to the Cyberpunk theme changes the accent CSS variable", async (
   await page.reload();
 
   // Create a GC so the chat surface is visible (background uses theme vars).
-  await signUp(page);
+  await signUpAdmin(page);
   await page.click('[data-testid="create-gc-toggle"]');
   await page.fill('[data-testid="create-gc-id"]', UNIQUE_GC());
   await page.fill('[data-testid="create-gc-name"]', "Theme Room");
@@ -72,7 +72,7 @@ test("switching to the Cyberpunk theme changes the accent CSS variable", async (
 });
 
 test("theme persists across a page reload", async ({ page }) => {
-  await signUp(page);
+  await signUpAdmin(page);
   await page.evaluate(() => localStorage.removeItem("chat-theme-id"));
   await page.reload();
   // openPalette() itself waits for the chat page to finish booting (the

@@ -51,6 +51,8 @@ export interface MessageGroup {
   displayName: string;
   /** Real username (may differ from displayName in anonymous rooms). */
   username: string | null;
+  /** Speaker tag: null for normal users, "sys" for system. */
+  speaker: string | null;
   /** Author avatar captured on the first message of the group. */
   avatarUrl: string | null;
   /** The first timestamp in the group (for the header). */
@@ -81,6 +83,7 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
         key: `${author}-${msg.id}`,
         displayName: author,
         username: msg.username ?? null,
+        speaker: msg.speaker ?? null,
         avatarUrl: msg.avatar_url ?? null,
         firstSentAt: msg.sent_at,
         messages: [msg],

@@ -21,8 +21,8 @@ test("signs up and is logged in (redirected to chat)", async ({ page }) => {
   await fillSignupForm(page, name);
   await page.click('button[type="submit"]');
 
-  // Should land on the chat page (create-gc toggle is visible when authed).
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  // Should land on the chat page (room-code-input is visible when authed).
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
   // The sidebar shows the username.
   await expect(page.locator('[data-testid="current-user"]')).toContainText(name);
 });
@@ -32,7 +32,7 @@ test("logging out redirects to /login", async ({ page }) => {
   await page.goto("/signup");
   await fillSignupForm(page, name);
   await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
 
   await page.click('[data-testid="logout-button"]');
   await expect(page.locator("h2")).toContainText("login");
@@ -49,7 +49,7 @@ test("can log in with an existing account", async ({ page }) => {
   await page.goto("/signup");
   await fillSignupForm(page, name);
   await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
 
   // Log out, then log back in.
   await page.click('[data-testid="logout-button"]');
@@ -57,7 +57,7 @@ test("can log in with an existing account", async ({ page }) => {
 
   await fillLoginForm(page, name);
   await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
   await expect(page.locator('[data-testid="current-user"]')).toContainText(name);
 });
 
@@ -67,7 +67,7 @@ test("duplicate username is rejected", async ({ page }) => {
   await page.goto("/signup");
   await fillSignupForm(page, name);
   await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
 
   // Log out and try the same username again.
   await page.click('[data-testid="logout-button"]');
@@ -84,7 +84,7 @@ test("wrong password is rejected", async ({ page }) => {
   await page.goto("/signup");
   await fillSignupForm(page, name);
   await page.click('button[type="submit"]');
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
 
   // Log out, then attempt login with a wrong password.
   await page.click('[data-testid="logout-button"]');

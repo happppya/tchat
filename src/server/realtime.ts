@@ -133,6 +133,54 @@ export function attachMessageHandler({
   });
 }
 
+const HELP_COMMANDS: [string, string][] = [
+  ['/kick @user', 'Remove a user from the room.'],
+  ['/ban @user', 'Ban a user from the room.'],
+  ['/unban @user', 'Remove a user\'s ban.'],
+  ['/mute @user', 'Prevent a user from sending messages.'],
+  ['/unmute @user', 'Allow a muted user to send messages.'],
+  ['/mod @user', 'Promote a user to moderator.'],
+  ['/demod @user', 'Demote a moderator.'],
+  ['/join #code', 'Join a room by its numeric code.'],
+  ['/leave', 'Leave the current room.'],
+  ['/help [page]', 'Show this help.'],
+];
+const HELP_PAGE_SIZE = 10;
+
+async function broadcastHelp(ctx: {
+  db: DB;
+  session: Session;
+  groupChatId: number;
+  page: number;
+  broadcast: Realtime['broadcast'];
+}): Promise<void> {
+  const { db, session, groupChatId, page, broadcast } = ctx;
+  const totalPages = Math.ceil(HELP_COMMANDS.length / HELP_PAGE_SIZE);
+  const p = Math.max(1, Math.min(page, totalPages));
+  const start = (p - 1) * HELP_PAGE_SIZE;
+  const slice = HELP_COMMANDS.slice(start, start + HELP_PAGE_SIZE);
+
+  const lines = [
+    `Commands (page ${p} of ${totalPages}):`,
+    '',
+    ...slice.map(([cmd, desc]) => `${cmd}  —  ${desc}`),
+    '',
+    totalPages > 1 ? `Type /help N for page N.` : '',
+  ].filter(Boolean);
+
+  broadcast(
+    {
+      type: 'message',
+      speaker: 'sys',
+      displayNameText: 'SYS',
+      groupChatId,
+      messageText: lines.join('\n'),
+      timestamp: sqliteNow(),
+    },
+    groupChatId
+  );
+}
+
 /**
  * Validate one client frame, store the message, and return the clean echo
  * payload to broadcast. Throws on invalid input; the connection handler turns
@@ -173,6 +221,11 @@ async function handleFrame(
     ws.send(JSON.stringify({ type: 'pong' }));
     return;
   }
+  if (type === 'help') {
+    const page = Math.max(1, parseInt(String(messageJSON.page ?? '1'), 10) || 1);
+    broadcastHelp({ db, session, groupChatId, page, broadcast });
+    return;
+  }
   if (!messageText && !gifUrl && !fileUrl) {
     return wsError(ws, 'Message is empty');
   }
@@ -209,14 +262,14 @@ async function handleFrame(
     return wsError(ws, 'Join this room before sending messages');
   }
 
-  // Banned users may not send messages.
-  if (await isRoomBanned(db, session.userId, groupChatId)) {
+  // Banned users may not send messages (admins are immune).
+  if (!isAdmin && (await isRoomBanned(db, session.userId, groupChatId))) {
     return wsError(ws, 'You are banned from this room');
   }
 
   // Muted users may not send messages (admins are immune).
   if (
-    !session.isAdmin &&
+    !isAdmin &&
     (await isRoomMuted(db, session.userId, groupChatId))
   ) {
     return wsError(ws, 'You are muted in this room');
@@ -224,7 +277,7 @@ async function handleFrame(
 
   // Readonly rooms: only admins may speak.
   if (
-    !session.isAdmin &&
+    !isAdmin &&
     (await roomIsReadonly(db, groupChatId))
   ) {
     return wsError(ws, 'This room is read-only (admins only)');

@@ -12,6 +12,8 @@ export interface Message {
   user_id?: number | null;
   /** Timestamp of the most recent edit, if any. */
   edited_at?: string | null;
+  /** Speaker tag: null for normal users, "sys" for system messages. */
+  speaker?: string | null;
   /** Denormalized author avatar URL captured when the message was sent. */
   avatar_url?: string | null;
   /** Uploaded attachment (served URL + display metadata), when present. */
@@ -52,12 +54,28 @@ export interface GroupChat {
   is_readonly?: number | null;
   is_anonymous?: number | null;
   is_transparent?: number | null;
+  is_public?: number | null;
 }
 
 /** Saved group chat in local storage */
 export interface SavedGC {
   id: number;
   name: string;
+}
+
+/** A local group that contains rooms (my rooms tab). */
+export interface LocalGroup {
+  id: string;
+  name: string;
+  roomIds: number[];
+}
+
+/** A board group from the server (board tab). */
+export interface BoardGroup {
+  id: number;
+  name: string;
+  roomIds: number[];
+  position: number;
 }
 
 /** Incoming WebSocket message */
@@ -67,9 +85,13 @@ export interface WSMessage {
     | "editMessage"
     | "deleteMessage"
     | "deleteRoom"
+    | "renameRoom"
+    | "kicked"
+    | "banned"
     | "messageReactions"
     | "error"
     | "pong";
+  message?: string;
   groupChatId: number;
   /** Real DB id echoed back on send and on edit/delete events. */
   id?: number;
@@ -88,8 +110,12 @@ export interface WSMessage {
   /** Reaction aggregate for messageReactions events. */
   reactions?: Reaction[];
   displayNameText?: string;
+  /** New room name for renameRoom events. */
+  name?: string;
   /** Real username (not display name) — for admin mod actions in anon rooms. */
   username?: string;
+  /** Speaker tag: null for normal users, "sys" for system messages. */
+  speaker?: string | null;
   gifUrl?: string | null;
   timestamp?: string;
   avatarUrl?: string | null;
@@ -139,6 +165,8 @@ export interface UserProfile {
   username: string;
   bio: string | null;
   picture_url: string | null;
+  isAdmin?: boolean;
+  isRoomOwner?: boolean;
 }
 
 /** A file attachment attached to an outgoing message. */

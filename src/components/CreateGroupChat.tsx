@@ -18,6 +18,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
   const [isReadonly, setIsReadonly] = useState(false);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [isTransparent, setIsTransparent] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,6 +42,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
         isReadonly,
         isAnonymous,
         isTransparent,
+        isPublic,
       });
       saveGC(gcId, name.trim());
       setId("");
@@ -50,6 +52,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
       setIsReadonly(false);
       setIsAnonymous(false);
       setIsTransparent(false);
+      setIsPublic(false);
       setIsOpen(false);
       onCreated(gcId);
     } catch (err) {
@@ -84,7 +87,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
         data-testid="create-gc-toggle"
         className="inline-flex items-center gap-2 cursor-pointer border-none bg-transparent text-[var(--text-secondary)] text-sm hover:text-[var(--text-primary)] transition-colors"
       >
-        new channel
+        new room
       </button>
 
       {isOpen && (
@@ -114,6 +117,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
             {toggle("readonly", isReadonly, setIsReadonly)}
             {toggle("anonymous", isAnonymous, setIsAnonymous)}
             {toggle("transparent", isTransparent, setIsTransparent)}
+            {toggle("public", isPublic, setIsPublic)}
           </div>
           {isHidden && (
             <input

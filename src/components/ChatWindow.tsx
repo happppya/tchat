@@ -30,6 +30,9 @@ interface Props {
   onSlashCommand: (command: string, arg: string) => void;
   onJoinRoom: (roomCode: number) => void;
   onModAction: (username: string, action: string) => void;
+  onRenameRoom: (name: string) => void;
+  /** Full room-type names for the header, e.g. ["anonymous"]. */
+  roomTypeNames?: string[];
   /** The logged-in user's id, passed down to gate edit/delete controls. */
   currentUserId: number | null;
   onEditMessage: (messageId: number, text: string) => void;
@@ -54,12 +57,16 @@ export default function ChatWindow({
   onSlashCommand,
   onJoinRoom,
   onModAction,
+  onRenameRoom,
+  roomTypeNames = [],
   currentUserId,
   onEditMessage,
   onDeleteMessage,
   onToggleReaction,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameName, setRenameName] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -67,6 +74,12 @@ export default function ChatWindow({
   const scrollAnchorRef = useRef(0);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
+
+  // Unique display names in the room for slash-command @username autocomplete.
+  const memberNames = useMemo(
+    () => [...new Set(messages.map((m) => m.display_name).filter(Boolean))] as string[],
+    [messages]
+  );
 
   const handleReply = (message: Message) => {
     setReplyingTo({
@@ -130,7 +143,50 @@ export default function ChatWindow({
       {/* Terminal title bar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <span className="text-[var(--accent)]">{"~"}</span>
-        <span className="text-[var(--text-primary)] text-sm">{gcName}</span>
+        {renaming ? (
+          <input
+            autoFocus
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const trimmed = renameName.trim();
+                if (trimmed) onRenameRoom(trimmed);
+                setRenaming(false);
+              }
+              if (e.key === "Escape") setRenaming(false);
+            }}
+            onBlur={() => setRenaming(false)}
+            className="bg-[var(--bg-secondary)] border border-[var(--accent)] px-1.5 py-0.5 text-sm text-[var(--text-primary)] outline-none"
+          />
+        ) : (
+          <span
+            className="text-[var(--text-primary)] text-sm group/gcn relative cursor-default"
+            title={isOwner || viewerIsAdmin ? "Click to rename" : undefined}
+          >
+            <span data-testid="room-header-name">{gcName}</span>
+            {roomTypeNames.map((type) => (
+              <span
+                key={type}
+                className="ml-2 text-[10px] text-[var(--text-muted)] border border-[var(--border-primary)] px-1 py-0.5"
+              >
+                {type}
+              </span>
+            ))}
+            {(isOwner || viewerIsAdmin) && (
+              <button
+                onClick={() => {
+                  setRenameName(gcName);
+                  setRenaming(true);
+                }}
+                className="hidden group-hover/gcn:inline-block absolute -right-5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs border-none bg-transparent cursor-pointer"
+                title="Rename room"
+              >
+                ✎
+              </button>
+            )}
+          </span>
+        )}
         <span
           data-testid="message-count"
           className="text-[var(--text-muted)] text-xs"
@@ -214,6 +270,7 @@ export default function ChatWindow({
         replyTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
         onSlashCommand={onSlashCommand}
+        memberNames={memberNames}
       />
     </div>
   );

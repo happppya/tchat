@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
+import { uniqueGcId, resetApp, signUp, signUpAdmin, createGroupChat } from "./helpers";
 
 /**
  * Profile flow tests: editing your own bio/picture, avatars in chat, and
@@ -16,6 +16,9 @@ test.beforeEach(async ({ page }) => {
 
 test("a user can edit and persist their own profile", async ({ page }) => {
   const username = await signUp(page);
+
+  // Profile edit doesn't need admin; room-code-input is enough.
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
 
   // Open edit mode from the sidebar.
   await page.click('[data-testid="profile-button"]');
@@ -38,7 +41,7 @@ test("a user can edit and persist their own profile", async ({ page }) => {
 
   // Reload and reopen — the values should have been persisted server-side.
   await page.reload();
-  await expect(page.locator('[data-testid="create-gc-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-testid="room-code-input"]')).toBeVisible();
   await page.click('[data-testid="profile-button"]');
   await expect(page.locator('[data-testid="profile-bio-input"]')).toHaveValue(
     "hello, I am a test bot"
@@ -59,7 +62,7 @@ test("profile pictures appear in chat and profiles are viewable", async ({
 
   try {
     // Alice sets a bio + picture, then creates a room and says hello.
-    const aliceName = await signUp(alice);
+    const aliceName = await signUpAdmin(alice);
     await alice.click('[data-testid="profile-button"]');
     await alice.fill('[data-testid="profile-bio-input"]', "alice bio");
     await alice.fill('[data-testid="profile-picture-input"]', PICTURE);
@@ -87,10 +90,11 @@ test("profile pictures appear in chat and profiles are viewable", async ({
       .first();
     await expect(avatar).toHaveAttribute("src", PICTURE);
 
-    // Clicking Alice's name opens her public profile.
+    // Clicking Alice's name opens a context menu; click "view profile".
     await bob
       .locator('[data-testid="message-author"]', { hasText: aliceName })
       .click();
+    await bob.locator('button', { hasText: "view profile" }).click();
     await expect(bob.locator('[data-testid="profile-modal"]')).toBeVisible();
     await expect(bob.locator('[data-testid="profile-username"]')).toHaveText(
       aliceName

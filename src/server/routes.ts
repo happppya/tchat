@@ -1,7 +1,7 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
-import express, { type Router, type Request, type Response } from 'express';
+import express, { type Router, type Request, type Response, type NextFunction } from 'express';
 import {
   hashPassword,
   verifyPassword,
@@ -41,6 +41,14 @@ import {
   validateGCID,
   getReactionsForMessage,
   attachReactions,
+  getBoardGroups,
+  createBoardGroup,
+  renameBoardGroup,
+  deleteBoardGroup,
+  addRoomToBoardGroup,
+  removeRoomFromBoardGroup,
+  reorderBoardGroups,
+  reorderBoardGroupRooms,
   type DB,
 } from './db';
 
@@ -222,16 +230,31 @@ export function createRouter({
   router.get('/profile/:username', requireAuth, async (req: Request, res: Response) => {
     const username =
       typeof req.params.username === 'string' ? req.params.username.trim() : '';
+    const { groupChatId } = req.query;
+    const gcId = groupChatId ? parseRoomCode(groupChatId) : null;
+
     if (!username) {
       return res.status(400).json({ error: 'Username is required' });
     }
 
     const user = await db.get(
-      'SELECT username, bio, picture_url FROM users WHERE username = ?',
+      'SELECT id, username, is_admin, bio, picture_url FROM users WHERE username = ?',
       [username]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(user);
+
+    let owner = false;
+    if (gcId !== null) {
+      owner = await isRoomOwner(db, user.id, gcId);
+    }
+
+    res.json({
+      username: user.username,
+      bio: user.bio,
+      picture_url: user.picture_url,
+      isAdmin: !!user.is_admin,
+      isRoomOwner: owner,
+    });
   });
 
   router.put('/profile', requireAuth, async (req: Request, res: Response) => {
@@ -276,7 +299,7 @@ export function createRouter({
       return res.status(403).json({ error: 'Only admins can create rooms' });
     }
 
-    const { id, name, isHidden, password, isReadonly, isAnonymous, isTransparent } =
+    const { id, name, isHidden, password, isReadonly, isAnonymous, isTransparent, isPublic } =
       req.body || {};
     const cleanName = typeof name === 'string' ? name.trim() : '';
     const gcId = parseRoomCode(id);
@@ -324,7 +347,8 @@ export function createRouter({
         passwordHash,
         isReadonly ? 1 : 0,
         isAnonymous ? 1 : 0,
-        isTransparent ? 1 : 0
+        isTransparent ? 1 : 0,
+        isPublic ? 1 : 0
       );
       await addRoomMember(db, req.session!.userId, gcId);
       res.status(201).json({ message: 'Group chat created successfully' });
@@ -409,17 +433,147 @@ export function createRouter({
     res.json({ message: 'Room deleted' });
   });
 
-  // Room directory: every non-hidden room. Hidden rooms stay code-access-only.
+  router.put('/renameRoom', requireAuth, async (req: Request, res: Response) => {
+    const { groupChatId, name } = req.body || {};
+    const gcId = parseRoomCode(groupChatId);
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+
+    if (gcId === null) {
+      return res.status(400).json({ error: 'Invalid room code' });
+    }
+    if (!cleanName) {
+      return res.status(400).json({ error: 'Room name is required' });
+    }
+
+    const groupChat = await db.get('SELECT * FROM group_chats WHERE id = ?', [gcId]);
+    if (!groupChat) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    // Admins can rename any room; room owners can rename their own.
+    const isAdmin = await isSiteAdmin(db, req.session!.userId);
+    if (!isAdmin && groupChat.owner_user_id !== req.session!.userId) {
+      return res
+        .status(403)
+        .json({ error: 'Only the room owner or an admin can rename this room' });
+    }
+
+    await db.run('UPDATE group_chats SET name = ? WHERE id = ?', [cleanName, gcId]);
+    broadcast({ type: 'renameRoom', groupChatId: gcId, name: cleanName });
+    res.json({ name: cleanName });
+  });
+
+  // Board: rooms marked public (is_public = 1). Code-only rooms stay code-access-only.
   router.get('/publicRooms', requireAuth, async (_req: Request, res: Response) => {
     try {
       const rooms = await db.all(
-        'SELECT id, name, is_hidden, is_readonly, is_anonymous, is_transparent FROM group_chats WHERE is_hidden = 0 ORDER BY id'
+        'SELECT id, name, is_hidden, is_readonly, is_anonymous, is_transparent, is_public FROM group_chats WHERE is_public = 1 ORDER BY id'
       );
       res.json(rooms);
     } catch (err) {
       console.error('publicRooms failed:', err);
       res.status(500).json({ error: 'Failed to load public rooms' });
     }
+  });
+
+  // Board groups — anyone can read, only admins can mutate.
+
+  /** Middleware that rejects non-admin requests for board group mutations. */
+  const requireBoardAdmin = async (req: Request, res: Response, next: NextFunction) => {
+    if (!(await isSiteAdmin(db, req.session!.userId))) {
+      return res.status(403).json({ error: 'Only admins can manage board groups' });
+    }
+    next();
+  };
+
+  router.get('/boardGroups', requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const groups = await getBoardGroups(db);
+      res.json(groups);
+    } catch (err) {
+      console.error('boardGroups failed:', err);
+      res.status(500).json({ error: 'Failed to load board groups' });
+    }
+  });
+
+  router.post('/boardGroups', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const { name } = req.body || {};
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    if (!cleanName) {
+      return res.status(400).json({ error: 'Group name is required' });
+    }
+    try {
+      const id = await createBoardGroup(db, cleanName);
+      res.status(201).json({ id, name: cleanName, roomIds: [], position: 0 });
+    } catch (err) {
+      console.error('createBoardGroup failed:', err);
+      res.status(500).json({ error: 'Failed to create board group' });
+    }
+  });
+
+  router.put('/boardGroups/:id', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const { name } = req.body || {};
+    if (typeof name === 'string' && name.trim()) {
+      await renameBoardGroup(db, id, name.trim());
+    }
+    res.json({ ok: true });
+  });
+
+  router.delete('/boardGroups/:id', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    await deleteBoardGroup(db, id);
+    res.json({ ok: true });
+  });
+
+  router.post('/boardGroups/reorder', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.every((i: unknown) => typeof i === 'number')) {
+      return res.status(400).json({ error: 'ids must be an array of numbers' });
+    }
+    await reorderBoardGroups(db, ids);
+    res.json({ ok: true });
+  });
+
+  router.post('/boardGroups/:id/rooms', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const groupId = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(groupId) || groupId < 1) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const { roomId } = req.body || {};
+    if (typeof roomId !== 'number') {
+      return res.status(400).json({ error: 'roomId is required' });
+    }
+    await addRoomToBoardGroup(db, groupId, roomId);
+    res.json({ ok: true });
+  });
+
+  router.delete('/boardGroups/rooms/:roomId', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const roomId = parseInt(String(req.params.roomId), 10);
+    if (!Number.isInteger(roomId) || roomId < 1) {
+      return res.status(400).json({ error: 'Invalid room id' });
+    }
+    await removeRoomFromBoardGroup(db, roomId);
+    res.json({ ok: true });
+  });
+
+  router.post('/boardGroups/:id/reorder-rooms', requireAuth, requireBoardAdmin, async (req: Request, res: Response) => {
+    const groupId = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(groupId) || groupId < 1) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const { roomIds } = req.body || {};
+    if (!Array.isArray(roomIds) || !roomIds.every((i: unknown) => typeof i === 'number')) {
+      return res.status(400).json({ error: 'roomIds must be an array of numbers' });
+    }
+    await reorderBoardGroupRooms(db, groupId, roomIds);
+    res.json({ ok: true });
   });
 
   router.get('/myRooms', requireAuth, async (req: Request, res: Response) => {
@@ -456,8 +610,9 @@ export function createRouter({
       return res.status(403).json({ error: 'You are banned from this room' });
     }
 
-    // Hidden rooms require the password.
-    if (groupChat.is_hidden && groupChat.password_hash && !isAdmin) {
+    // Hidden rooms require the password — but only for first join.
+    const alreadyMember = await isRoomMember(db, req.session!.userId, gcId);
+    if (groupChat.is_hidden && groupChat.password_hash && !isAdmin && !alreadyMember) {
       const pass = typeof password === 'string' ? password : '';
       const ok = await verifyPassword(pass, groupChat.password_hash);
       if (!ok) {

@@ -77,17 +77,31 @@ export default function MessageBubble({
     >
       {/* Author header: avatar + clickable name + time */}
       <div className="flex items-center gap-1.5 flex-wrap relative">
-        <button
-          onClick={() => setNameMenuOpen((p) => !p)}
-          data-testid="message-author"
-          title={`${group.displayName} — click for actions`}
-          className="flex items-center gap-1.5 p-0 border-none bg-transparent cursor-pointer text-left"
-        >
-          <Avatar name={group.displayName} src={group.avatarUrl} size={24} />
-          <span className="text-[var(--accent)] glow font-semibold">
-            {group.displayName}
+        {group.speaker ? (
+          <span className="flex items-center gap-1.5">
+            <span className="w-6 h-6 flex items-center justify-center text-xs border border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 rounded-full">
+              ✓
+            </span>
+            <span className="text-[var(--accent)] glow font-semibold">
+              {group.displayName}
+            </span>
+            <span className="text-[10px] border px-1 py-0 border-[var(--accent)]/60 text-[var(--accent)] uppercase">
+              {group.speaker}
+            </span>
           </span>
-        </button>
+        ) : (
+          <button
+            onClick={() => setNameMenuOpen((p) => !p)}
+            data-testid="message-author"
+            title={`${group.displayName} — click for actions`}
+            className="flex items-center gap-1.5 p-0 border-none bg-transparent cursor-pointer text-left"
+          >
+            <Avatar name={group.displayName} src={group.avatarUrl} size={24} />
+            <span className="text-[var(--accent)] glow font-semibold">
+              {group.displayName}
+            </span>
+          </button>
+        )}
         <span className="text-[var(--text-muted)] text-xs">
           {time && `[${time}]`}
         </span>

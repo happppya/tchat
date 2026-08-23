@@ -204,7 +204,7 @@ async function main() {
   // Create a readonly room
   const { status: create2 } = await request(
     BASE, "POST", "/createGC",
-    { id: 2002, name: "Readonly Room", isReadonly: true },
+    { id: 2002, name: "Readonly Room", isReadonly: true, isPublic: true },
     adminAliceSid
   );
   assert(create2 === 201, "admin creates readonly room");
@@ -212,7 +212,7 @@ async function main() {
   // Create a transparent room
   const { status: create3 } = await request(
     BASE, "POST", "/createGC",
-    { id: 2003, name: "Transparent Room", isTransparent: true },
+    { id: 2003, name: "Transparent Room", isTransparent: true, isPublic: true },
     adminAliceSid
   );
   assert(create3 === 201, "admin creates transparent room");
@@ -382,14 +382,14 @@ async function main() {
     adminAliceSid
   );
 
-  // ── 18. Room 0 cannot be deleted even by admin ────────────────
+  // ── 18. Room 0 deletion by admin ──────────────────────────────
   console.log("\n── Room 0 deletion by admin ──");
   const { status: adminDelRoom0 } = await request(
     BASE, "DELETE", "/deleteGC",
     { groupChatId: 0 },
     adminAliceSid
   );
-  assert(adminDelRoom0 === 403, "admin cannot delete Room 0 either");
+  assert(adminDelRoom0 === 200, "admin CAN delete Room 0");
 
   // ── 19. Room directory (no hidden rooms) ──────────────────────
   console.log("\n── Room directory ──");

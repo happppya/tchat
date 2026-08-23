@@ -43,7 +43,7 @@ async function buildApp(): Promise<{
 
   const app: Express = express();
   app.use(express.json({ limit: "5mb" }));
-  app.use("/api", routesModule.createRouter({ db, broadcast: () => {} }));
+  app.use("/api", routesModule.createRouter({ db, broadcast: () => {}, sendToUser: () => {} }));
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -115,7 +115,7 @@ describe("rate limiting", () => {
     // Build a fresh app directly (env already set).
     const app: Express = express();
     app.use(express.json({ limit: "5mb" }));
-    app.use("/api", routesModule.createRouter({ db, broadcast: () => {} }));
+    app.use("/api", routesModule.createRouter({ db, broadcast: () => {}, sendToUser: () => {} }));
     const httpServer = http.createServer(app);
     await new Promise<void>((resolve) =>
       httpServer.listen(0, "127.0.0.1", resolve)
