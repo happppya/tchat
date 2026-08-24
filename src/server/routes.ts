@@ -1091,5 +1091,52 @@ export function createRouter({
     }
   );
 
+  // -------------------------------------------------------------------------
+  // Operator — secret-gated admin promotion
+  // -------------------------------------------------------------------------
+  //
+  // Cloud Run (and other PaaS hosts) offer no shell access to the running
+  // process, so the stdin CLI's `promote` command is unreachable there. This
+  // endpoint lets an operator promote (or demote) a user by presenting a
+  // shared secret (ADMIN_SECRET env var) — deliberately NOT behind requireAuth
+  // so it still works if you're locked out. Safe by default: with ADMIN_SECRET
+  // unset, the endpoint always rejects.
+  router.post('/promote', authLimiter, async (req: Request, res: Response) => {
+    const expected = process.env.ADMIN_SECRET;
+    const provided = String(req.headers['x-admin-secret'] ?? '');
+    const ok =
+      !!expected &&
+      provided.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+    if (!ok) {
+      return res.status(403).json({ error: 'Invalid admin secret' });
+    }
+
+    const { username, isAdmin } = req.body || {};
+    const clean = typeof username === 'string' ? username.trim() : '';
+    if (!USERNAME_RE.test(clean)) {
+      return res.status(400).json({ error: 'Invalid username' });
+    }
+
+    const user = await db.get('SELECT id FROM users WHERE username = ?', [
+      clean,
+    ]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const promote = isAdmin !== false;
+    await db.run('UPDATE users SET is_admin = ? WHERE username = ?', [
+      promote ? 1 : 0,
+      clean,
+    ]);
+    console.log(
+      `[promote] ${clean} ${promote ? 'is now' : 'is no longer'} a site admin (via secret endpoint)`
+    );
+    res.json({
+      message: promote
+        ? `${clean} is now a site admin`
+        : `${clean} is no longer a site admin`,
+    });
+  });
+
   return router;
 }

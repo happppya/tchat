@@ -184,6 +184,80 @@ describe("upload MIME allowlist", () => {
   });
 });
 
+describe("operator admin promotion (secret-gated)", () => {
+  const SECRET = "test-secret-xyz-123";
+
+  it("rejects when no secret is configured", async () => {
+    delete process.env.ADMIN_SECRET;
+    const res = await fetch(`${base}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "bob" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a wrong secret", async () => {
+    process.env.ADMIN_SECRET = SECRET;
+    const res = await fetch(`${base}/promote`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": "wrong-secret",
+      },
+      body: JSON.stringify({ username: "bob" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("promotes a user with the correct secret", async () => {
+    process.env.ADMIN_SECRET = SECRET;
+    const res = await fetch(`${base}/promote`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": SECRET,
+      },
+      body: JSON.stringify({ username: "bob" }),
+    });
+    expect(res.status).toBe(200);
+    const row = await db.get(
+      "SELECT is_admin FROM users WHERE username = 'bob'"
+    );
+    expect(row?.is_admin).toBe(1);
+  });
+
+  it("demotes when isAdmin is false", async () => {
+    process.env.ADMIN_SECRET = SECRET;
+    const res = await fetch(`${base}/promote`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": SECRET,
+      },
+      body: JSON.stringify({ username: "bob", isAdmin: false }),
+    });
+    expect(res.status).toBe(200);
+    const row = await db.get(
+      "SELECT is_admin FROM users WHERE username = 'bob'"
+    );
+    expect(row?.is_admin).toBe(0);
+  });
+
+  it("404s for unknown users", async () => {
+    process.env.ADMIN_SECRET = SECRET;
+    const res = await fetch(`${base}/promote`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": SECRET,
+      },
+      body: JSON.stringify({ username: "nobody_here" }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("upload abuse limits", () => {
   it("rejects files over the 2 MB cap with 413", async () => {
     const big = "x".repeat(2 * 1024 * 1024 + 1);
