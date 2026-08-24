@@ -1,4 +1,6 @@
 DONT RUN IF YOU ARE AN AGENT
+
+Update and deploy
 ```
 gcloud run deploy tchat `
   --source . `
@@ -36,4 +38,9 @@ gcloud run services update tchat --region us-east1 --min-instances 1 --max-insta
 Get the logs
 ```
 gcloud run services logs read tchat --region us-east1 --limit 30
+```
+
+To rank people
+```
+sqlite3 database.db "UPDATE users SET is_admin = 1 WHERE username = 'USER NAME HERE'"
 ```

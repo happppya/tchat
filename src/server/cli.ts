@@ -32,7 +32,7 @@ export function startCli({
     switch (command.toLowerCase()) {
       case 'help':
         console.log(
-          'Available commands: status, create, destroy, stop, db, msgclear, gcclear'
+          'Available commands: status, create, destroy, stop, db, msgclear, gcclear, promote'
         );
         break;
       case 'status':
@@ -44,6 +44,21 @@ export function startCli({
         console.log('Shutting down server gracefully...');
         shutdown();
         break;
+      case 'promote':
+        if (args.length < 1) {
+          console.log('Usage: promote <username>');
+        } else {
+          const username = args.join(' ').trim();
+          if (!username) {
+            console.log('Usage: promote <username>');
+          } else {
+            await db.run(
+              'UPDATE users SET is_admin = 1 WHERE username = ?',
+              [username]
+            );
+            console.log(`${username} promoted to admin. They must re-login for it to take effect.`);
+          }
+        }
       case 'create':
         if (args.length < 2) {
           console.log('Usage: create <gc_id> <gc_name>');
