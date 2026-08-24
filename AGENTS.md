@@ -166,6 +166,51 @@ both the sidebar and the chat header. PUT `/renameRoom` broadcasts a
 `renameRoom` WS message; clients update the saved list (`renameSavedGC`),
 the chat header, and the board list.
 
+## Cloud Run deployment (persistent SQLite)
+
+The app is deployed with `gcloud run deploy tchat --source .`. Cloud Run
+instances are stateless — `database.db` on the container's ephemeral disk is
+wiped on every deploy/cold start. To make it survive redeploys, mount a Cloud
+Storage bucket as a volume:
+
+```bash
+# 1. Bucket (same region as the service)
+gcloud storage buckets create gs://tchat-data --location=<REGION>
+
+# 2. Let the Cloud Run runtime service account write to it
+#    (default: <PROJECT_NUMBER>-compute@developer.gserviceaccount.com)
+gcloud storage buckets add-iam-policy-binding gs://tchat-data \
+  --member=serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com \
+  --role=roles/storage.objectAdmin
+
+# 3. Deploy with the volume mounted, pinned to ONE instance, and SQLite in
+#    journal_mode=delete
+#
+#    Cloud Storage FUSE provides NO real file locking, so WAL mode (which
+#    relies on -wal/-shm lock files) can corrupt the DB there. The safe combo
+#    is a single instance + non-WAL journal mode.
+gcloud run deploy tchat --source . \
+  --region=<REGION> \
+  --max-instances=1 \
+  --add-volume=name=data,type=cloud-storage,bucket=tchat-data \
+  --add-volume-mount=volume=data,mount-path=/data \
+  --set-env-vars=DATABASE_PATH=/data/database.db,SQLITE_JOURNAL_MODE=delete,UPLOAD_DIR=/data/uploads \
+  --update-env-vars=ADMIN_SECRET=<your-secret>
+```
+
+Carrying over an existing database (stop the local server first so the WAL
+is checkpointed):
+
+```bash
+gcloud storage cp database.db gs://tchat-data/database.db
+gcloud storage cp -r uploads gs://tchat-data/uploads
+```
+
+The server opens `SQLITE_JOURNAL_MODE` (default `wal`) and `UPLOAD_DIR`
+(default `./uploads`) at startup; both are read in `openDatabase()` and
+`server.ts`/`routes.ts` respectively. On FUSE mounts, expect slower first
+writes (object-store latency) — fine for low-traffic apps.
+
 ## Role system
 
 - **Site admins** — `users.is_admin = 1`. Set manually via SQL. Immune to all

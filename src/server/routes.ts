@@ -52,8 +52,11 @@ import {
   type DB,
 } from './db';
 
-// Uploaded attachments live on disk under the project root.
-const UPLOAD_DIR = path.join(PROJECT_ROOT, 'uploads');
+// Uploaded attachments live on disk under the project root. UPLOAD_DIR
+// overrides the default so a persistent volume can hold them too (must match
+// server.ts).
+const UPLOAD_DIR =
+  process.env.UPLOAD_DIR || path.join(PROJECT_ROOT, 'uploads');
 
 /** Validation: 3–30 chars, letters/digits/_/-/. — no spaces or symbols. */
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,30}$/;

@@ -8,6 +8,31 @@ export type DB = Database<sqlite3.Database, sqlite3.Statement>;
 /** Busy handler wait before a locked write fails with SQLITE_BUSY (ms). */
 const BUSY_TIMEOUT_MS = 5000;
 
+/** Journal modes sqlite3 accepts for a file database. */
+const ALLOWED_JOURNAL_MODES = [
+  'delete',
+  'truncate',
+  'persist',
+  'memory',
+  'wal',
+  'off',
+] as const;
+type JournalMode = (typeof ALLOWED_JOURNAL_MODES)[number];
+
+/**
+ * Journal mode from SQLITE_JOURNAL_MODE (default "wal").
+ *
+ * Cloud Storage FUSE volumes (Cloud Run) don't provide real file locking, so
+ * WAL's -wal/-shm lock files are unsafe there — set SQLITE_JOURNAL_MODE=delete
+ * (paired with --max-instances=1) when the DB lives on a FUSE mount.
+ */
+function journalModeFromEnv(): JournalMode {
+  const value = (process.env.SQLITE_JOURNAL_MODE || 'wal').toLowerCase();
+  return (ALLOWED_JOURNAL_MODES as readonly string[]).includes(value)
+    ? (value as JournalMode)
+    : 'wal';
+}
+
 /**
  * Open the SQLite database and run all idempotent migrations. Returns the
  * ready-to-use db handle.
@@ -22,7 +47,7 @@ export async function openDatabase(dbPath: string): Promise<DB> {
   // write pair surfaces as SQLITE_BUSY errors. foreign_keys is off by default
   // per connection; enabling it keeps future schema changes safe (existing
   // tables declare no FKs, so this is inert until they do).
-  await db.exec('PRAGMA journal_mode = WAL;');
+  await db.exec(`PRAGMA journal_mode = ${journalModeFromEnv()};`);
   await db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
   await db.exec('PRAGMA foreign_keys = ON;');
   await runMigrations(db);

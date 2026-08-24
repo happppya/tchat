@@ -80,8 +80,11 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(PROJECT_ROOT, 'dist')));
 
 // Uploaded attachments live on disk (not in the DB) so message history stays
-// small and the files can be served directly by the web server.
-const UPLOAD_DIR = path.join(PROJECT_ROOT, 'uploads');
+// small and the files can be served directly by the web server. UPLOAD_DIR
+// overrides the default (./uploads) so a persistent volume can hold them too
+// (e.g. /data/uploads on a Cloud Run FUSE mount).
+const UPLOAD_DIR =
+  process.env.UPLOAD_DIR || path.join(PROJECT_ROOT, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOAD_DIR));
 

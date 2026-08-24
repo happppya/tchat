@@ -1,6 +1,7 @@
 .env
 prod-env.yaml
 
+notes/
 .freebuff/
 node_modules/
 database.db

@@ -45,4 +45,24 @@ describe("database connection settings", () => {
       await db.close();
     }
   });
+
+  it("honors SQLITE_JOURNAL_MODE=delete (for FUSE-backed volumes)", async () => {
+    const file = path.join(
+      os.tmpdir(),
+      `tchat-journal-${Date.now()}-${process.pid}.db`
+    );
+    tempFiles.push(file);
+
+    const prev = process.env.SQLITE_JOURNAL_MODE;
+    process.env.SQLITE_JOURNAL_MODE = "delete";
+    const db: DB = await openDatabase(file);
+    if (prev === undefined) delete process.env.SQLITE_JOURNAL_MODE;
+    else process.env.SQLITE_JOURNAL_MODE = prev;
+    try {
+      const journalMode = await db.get("PRAGMA journal_mode");
+      expect(String(journalMode.journal_mode).toLowerCase()).toBe("delete");
+    } finally {
+      await db.close();
+    }
+  });
 });
