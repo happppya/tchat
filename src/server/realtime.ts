@@ -310,6 +310,15 @@ async function handleFrame(
       replyQuote = 'GIF';
     }
     if (replyQuote) replyQuote = replyQuote.slice(0, 280);
+
+    // Prepend @replyAuthor so the reply target gets pinged. Only do this
+    // when the sender hasn't already included the mention themselves.
+    if (replyAuthor && messageText) {
+      const mention = `@${replyAuthor}`;
+      if (!messageText.startsWith(mention)) {
+        messageText = `${mention} ${messageText}`;
+      }
+    }
   }
 
   // Attach the sender's current profile picture so live recipients can

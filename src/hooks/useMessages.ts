@@ -8,7 +8,7 @@ import {
   reactToMessage as reactToMessageRequest,
 } from "../services/api";
 import type { Reaction } from "../types";
-import { saveGC, getSavedGCs } from "../services/storage";
+import { saveGC, getSavedGCs, getLastReadId, setLastReadId as persistLastReadId } from "../services/storage";
 import { MESSAGES_PAGE_SIZE } from "../constants";
 
 /**
@@ -21,11 +21,15 @@ export function useMessages(groupChatId: number | null) {
   const [error, setError] = useState<string>("");
   const [hasMore, setHasMore] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  /** ID of the last message the user has "seen" — everything above is read. */
+  const [lastReadId, setLastReadId] = useState(0);
   // Monotonic counter for room loads: only the most recently requested room's
   // response may be applied, so a slow fetch for room A can never render its
   // history under room B after the user switches rooms.
   const loadGenerationRef = useRef(0);
   const loadingOlderRef = useRef(false);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const loadMessages = useCallback(async (gcId: number) => {
     const generation = ++loadGenerationRef.current;
@@ -63,9 +67,23 @@ export function useMessages(groupChatId: number | null) {
     }
   }, []);
 
-  // Reload when groupChatId changes
+  /** Mark every loaded message as read — updates in-memory state only. */
+  const markAllRead = useCallback(() => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.id > 0) {
+        setLastReadId(last.id);
+      }
+      return prev; // no mutation
+    });
+  }, []);
+
+  // Reload when groupChatId changes. Persist read-position on leave.
   useEffect(() => {
     if (groupChatId !== null) {
+      // Restore the persisted last-read position for this room, so the
+      // unread bar survives page reloads.
+      setLastReadId(getLastReadId(groupChatId));
       loadMessages(groupChatId);
     } else {
       setMessages([]);
@@ -73,7 +91,17 @@ export function useMessages(groupChatId: number | null) {
       setGcInfo(null);
       setHasMore(true);
       setError("");
+      setLastReadId(0);
     }
+
+    // When leaving a room, persist how far the user read so the unread
+    // bar picks up from the right spot next time they open the room.
+    return () => {
+      const last = messagesRef.current[messagesRef.current.length - 1];
+      if (last && last.id > 0 && groupChatId !== null) {
+        persistLastReadId(groupChatId, last.id);
+      }
+    };
   }, [groupChatId, loadMessages]);
 
   /**
@@ -217,5 +245,7 @@ export function useMessages(groupChatId: number | null) {
     editMessage,
     deleteMessage,
     toggleReaction,
+    lastReadId,
+    markAllRead,
   };
 }

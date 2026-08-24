@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useTheme } from "../themes/useTheme";
 
 export interface CommandAction {
   id: string;
@@ -33,32 +32,13 @@ interface Props {
  * all in-palette keyboard navigation.
  */
 export default function CommandPalette({ isOpen, onClose, actions = [] }: Props) {
-  const { themeId, themes, setTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Build the full action list: host actions + theme-switch actions.
-  const themeActions: CommandAction[] = useMemo(
-    () =>
-      themes.map((t) => ({
-        id: `theme-${t.id}`,
-        section: "Themes",
-        label: t.name,
-        hint: t.description,
-        keywords: `theme color ${t.id} ${t.description}`,
-        run: () => {
-          setTheme(t.id);
-        },
-      })),
-    [themes, setTheme]
-  );
-
-  const allActions = useMemo(
-    () => [...actions, ...themeActions],
-    [actions, themeActions]
-  );
+  // Host supplies all actions (including theme navigation).
+  const allActions = actions;
 
   // Filter by the search query across label, hint, keywords, section.
   const filtered = useMemo(() => {
@@ -215,10 +195,6 @@ export default function CommandPalette({ isOpen, onClose, actions = [] }: Props)
                         {action.shortcut}
                       </kbd>
                     )}
-                    {action.section === "Themes" &&
-                      action.id === `theme-${themeId}` && (
-                        <span className="text-[var(--accent)] text-xs">●</span>
-                      )}
                   </button>
                 );
               })}

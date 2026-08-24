@@ -17,6 +17,8 @@ import {
   addRoomToLocalGroup,
   removeRoomFromLocalGroup,
   moveLocalRoom,
+  moveRoomToStart,
+  moveRoomToEnd,
 } from "../services/storage";
 import {
   fetchMyRooms,
@@ -32,24 +34,45 @@ import {
   renameRoom,
 } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
+import Avatar from "./Avatar";
+import RoomButton from "./RoomButton";
+import GroupHeader from "./GroupHeader";
 import CreateGroupChat from "./CreateGroupChat";
 import { MAX_GC_ID_DIGITS } from "../constants";
-import { roomTypeTags } from "../utils/roomTypes";
 import { canRenameRoom } from "../utils/roomPerms";
+import type { RoomNotifMap, NotifSettings } from "../services/storage";
 
 interface Props {
   activeGCId: number | null;
   onSelectGC: (id: number) => void;
   onEditProfile: () => void;
+  onOpenSettings: () => void;
   onToggleSidebar: () => void;
+  onShowTutorial?: () => void;
+  onShowChangelog?: () => void;
   className?: string;
+  /** Per-room unread notification counts for sidebar badges. */
+  roomNotifs?: RoomNotifMap;
+  /** Toggle settings controlling which badges to show. */
+  notifSettings?: NotifSettings;
+  /** Set of muted room IDs (suppress all notifications). */
+  mutedRooms?: Set<number>;
+  /** Called when the user toggles mute on a room. */
+  onToggleMute?: (gcId: number) => void;
 }
 
 export default function Sidebar({
   activeGCId,
   onSelectGC,
   onEditProfile,
+  onOpenSettings,
   onToggleSidebar,
+  onShowTutorial,
+  onShowChangelog,
+  roomNotifs = {},
+  notifSettings,
+  mutedRooms,
+  onToggleMute,
   className,
 }: Props) {
   const [savedGCs, setSavedGCs] = useState<SavedGC[]>(getSavedGCs());
@@ -77,6 +100,9 @@ export default function Sidebar({
   const renamingRoomRef = useRef<{ id: number; name: string } | null>(null);
   // Prevent onClick from firing after a completed drag.
   const didDrag = useRef(false);
+  // Context-menu state for right-click on rooms (mute/unmute).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; roomId: number } | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
   const newGroupRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -273,37 +299,45 @@ export default function Sidebar({
 
   // ---- Drag and drop ----
 
-  const handleDragStartRoom = (
-    e: React.DragEvent,
-    roomId: number
-  ) => {
-    e.dataTransfer.setData("text/plain", String(roomId));
-    e.dataTransfer.effectAllowed = "move";
-    didDrag.current = true;
+  /** Whether the current tab allows the current user to reorder rooms/groups. */
+  const canReorder = tab === "myrooms" || isAdmin;
+
+  const handleDragStartRoom = (roomId: number) => {
+    return (e: React.DragEvent) => {
+      if (!canReorder) return;
+      e.dataTransfer.setData("text/plain", String(roomId));
+      e.dataTransfer.effectAllowed = "move";
+      didDrag.current = true;
+    };
   };
 
-  const handleDragStartGroup = (
-    e: React.DragEvent,
-    groupId: string | number
-  ) => {
-    e.dataTransfer.setData("application/group-id", String(groupId));
-    e.dataTransfer.effectAllowed = "move";
-    didDrag.current = true;
+  const handleDragStartGroup = (groupId: string | number) => {
+    return (e: React.DragEvent) => {
+      if (!canReorder) return;
+      e.dataTransfer.setData("application/group-id", String(groupId));
+      e.dataTransfer.effectAllowed = "move";
+      didDrag.current = true;
+    };
   };
 
-  const handleDragOverGroup = (e: React.DragEvent, groupId: string | number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverGroup(groupId);
+  const handleDragOverGroup = (groupId: string | number) => {
+    return (e: React.DragEvent) => {
+      if (!canReorder) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDragOverGroup(groupId);
+    };
   };
 
   const handleDragOverRoom = (e: React.DragEvent, roomId: number) => {
+    if (!canReorder) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setDragOverRoom(roomId);
   };
 
   const handleDragOverTop = (e: React.DragEvent) => {
+    if (!canReorder) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setDragOverGroup(null);
@@ -335,8 +369,7 @@ export default function Sidebar({
       if (tab === "myrooms") {
         addRoomToLocalGroup(roomId, groupId as string);
         setLocalGroups(getLocalGroups());
-      } else {
-        if (!isAdmin) return;
+      } else if (canReorder) {
         addRoomToBoardGroup(groupId as number, roomId).then(() => {
           setBoardGroups((prev) =>
             prev.map((g) => {
@@ -363,10 +396,10 @@ export default function Sidebar({
           saveLocalGroups(groups);
           setLocalGroups(getLocalGroups());
         }
-      } else {
-        if (!isAdmin) return;
+      } else if (canReorder) {
         const ids = boardGroups.map((g) => g.id);
-        const srcIdx = ids.indexOf(srcGroupId as unknown as number);
+        const parsedSrc = parseInt(srcGroupId, 10);
+        const srcIdx = ids.indexOf(parsedSrc);
         const dstIdx = ids.indexOf(groupId as number);
         if (srcIdx >= 0 && dstIdx >= 0) {
           const [moved] = ids.splice(srcIdx, 1);
@@ -381,18 +414,37 @@ export default function Sidebar({
     }
   };
 
-  /** Move a room next to a board room (reorder within a group / spill to top). */
+  /** Move a room next to a board room (reorder within a group / top-level). */
   const handleBoardRoomDrop = async (draggedId: number, targetRoomId: number) => {
     const targetGroup = boardGroups.find((g) => g.roomIds.includes(targetRoomId));
     if (!targetGroup) {
-      // Target is a top-level board room: spill the dragged room to top level.
-      await removeRoomFromBoardGroup(draggedId);
-      setBoardGroups((prev) =>
-        prev.map((g) => ({
-          ...g,
-          roomIds: g.roomIds.filter((r) => r !== draggedId),
-        }))
-      );
+      // Target is a top-level board room: spill dragged to top level
+      // and reorder within the top-level list.
+      const bGrouped = new Set(boardGroups.flatMap((g) => g.roomIds));
+      const topLevel = publicRooms.filter((r) => !bGrouped.has(r.id));
+      const draggedInTop = topLevel.some((r) => r.id === draggedId);
+
+      if (!draggedInTop) {
+        // Dragged room is in a group — spill it to top level.
+        await removeRoomFromBoardGroup(draggedId);
+        setBoardGroups((prev) =>
+          prev.map((g) => ({
+            ...g,
+            roomIds: g.roomIds.filter((r) => r !== draggedId),
+          }))
+        );
+      }
+
+      // Client-side reorder: insert dragged room right before the target
+      // in the top-level publicRooms list.
+      setPublicRooms((prev) => {
+        const without = prev.filter((r) => r.id !== draggedId);
+        const idx = without.findIndex((r) => r.id === targetRoomId);
+        if (idx < 0) return prev;
+        const reordered = [...without];
+        reordered.splice(idx, 0, prev.find((r) => r.id === draggedId)!);
+        return reordered;
+      });
       return;
     }
     const groupId = targetGroup.id;
@@ -427,7 +479,7 @@ export default function Sidebar({
       moveLocalRoom(draggedId, targetRoomId, targetGroup ? targetGroup.id : null);
       setLocalGroups(getLocalGroups());
       setSavedGCs(getSavedGCs());
-    } else if (isAdmin) {
+    } else if (canReorder) {
       void handleBoardRoomDrop(draggedId, targetRoomId);
     }
   };
@@ -446,8 +498,8 @@ export default function Sidebar({
       if (tab === "myrooms") {
         removeRoomFromLocalGroup(roomId);
         setLocalGroups(getLocalGroups());
-      } else {
-        if (!isAdmin) return;
+        setSavedGCs(getSavedGCs());
+      } else if (canReorder) {
         removeRoomFromBoardGroup(roomId).then(() => {
           setBoardGroups((prev) =>
             prev.map((g) => ({
@@ -459,6 +511,49 @@ export default function Sidebar({
       }
     }
   };
+
+  const handleDropAtStart = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const roomIdStr = e.dataTransfer.getData("text/plain");
+    if (!roomIdStr) return;
+    const roomId = parseInt(roomIdStr, 10);
+    if (!roomId) return;
+    setDragOverGroup(null);
+    setDragOverRoom(null);
+    didDrag.current = false;
+    if (tab === "myrooms") {
+      removeRoomFromLocalGroup(roomId);
+      moveRoomToStart(roomId);
+      setLocalGroups(getLocalGroups());
+      setSavedGCs(getSavedGCs());
+    }
+  };
+
+  const handleDropAtEnd = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const roomIdStr = e.dataTransfer.getData("text/plain");
+    if (!roomIdStr) return;
+    const roomId = parseInt(roomIdStr, 10);
+    if (!roomId) return;
+    setDragOverGroup(null);
+    setDragOverRoom(null);
+    didDrag.current = false;
+    if (tab === "myrooms") {
+      removeRoomFromLocalGroup(roomId);
+      moveRoomToEnd(roomId);
+      setLocalGroups(getLocalGroups());
+      setSavedGCs(getSavedGCs());
+    }
+  };
+
+  const handleEndZoneDragOver = useCallback((e: React.DragEvent) => {
+    if (!canReorder) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+  }, [canReorder]);
 
   // ---- Keyboard shortcuts ----
 
@@ -487,6 +582,25 @@ export default function Sidebar({
     return () => window.removeEventListener("keydown", onKey);
   }, [tab, creatingGroup, renaming]);
 
+  // Dismiss context menu on any click outside it, or Escape.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const dismiss = (e: MouseEvent) => {
+      // Don't dismiss if the click is inside the context menu itself.
+      if (ctxMenuRef.current?.contains(e.target as Node)) return;
+      setCtxMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("click", dismiss, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", dismiss, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
   // ---- Derive which rooms are in which groups ----
 
   const roomMap = new Map(savedGCs.map((gc) => [gc.id, gc]));
@@ -501,206 +615,108 @@ export default function Sidebar({
 
   // ---- Render helpers ----
 
-  const roomButton = (room: SavedGC | GroupChat, prefix: string) => {
+  const renderRoom = (room: SavedGC | GroupChat, prefix: string) => {
     const canRename = canRenameRoom({
       tab,
       isAdmin,
       roomOwnerId: memberRooms.find((r) => r.id === room.id)?.owner_user_id,
       userId: user?.id ?? null,
     });
-    const renamingThis = renamingRoom && renamingRoom.id === room.id;
+    const renamingThis = renamingRoom?.id === room.id;
+
     return (
-      <div
+      <RoomButton
         key={room.id}
-        role="button"
-        tabIndex={0}
-        draggable={tab === "myrooms" || isAdmin}
-        onDragStart={(e) => handleDragStartRoom(e, room.id)}
+        room={room}
+        prefix={prefix}
+        active={activeGCId === room.id}
+        dragOver={dragOverRoom === room.id}
+        canReorder={canReorder}
+        showNotifBadges={tab === "myrooms"}
+        canRename={canRename}
+        showRemoveBtn={tab === "myrooms"}
+        renamingThis={!!renamingThis}
+        renamingName={renamingRoom?.name ?? ""}
+        roomNotifCounts={roomNotifs}
+        notifSettings={notifSettings}
+        mutedRooms={mutedRooms}
+        didDragRef={didDrag}
+        onSelect={() => onSelectGC(room.id)}
+        onDragStart={handleDragStartRoom(room.id)}
         onDragOver={(e) => handleDragOverRoom(e, room.id)}
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleDropOnRoom(e, room.id)}
-        onMouseDown={() => { didDrag.current = false; }}
-        onClick={() => {
-          if (didDrag.current) return;
-          onSelectGC(room.id);
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (!onToggleMute) return;
+          setCtxMenu({ x: e.clientX, y: e.clientY, roomId: room.id });
         }}
-        data-testid={`${tab === "myrooms" ? "gc-button" : "public-room"}-${room.id}`}
-        className={`group/room flex items-center w-full text-left px-2 py-1.5 my-0.5 border-l-2 border-transparent text-[var(--text-secondary)] text-sm bg-transparent cursor-pointer hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors ${
-          activeGCId === room.id
-            ? "!border-[var(--accent)] !text-[var(--text-primary)] !bg-[var(--bg-tertiary)]"
-            : ""
-        } ${
-          dragOverRoom === room.id
-            ? "!border-[var(--accent)] bg-[var(--accent)]/10"
-            : ""
-        }`}
-      >
-        <span className="text-[var(--accent)] mr-1">
-          {activeGCId === room.id ? ">" : prefix}
-        </span>
-        {renamingThis ? (
-          <input
-            autoFocus
-            value={renamingRoom.name}
-            onChange={(e) => {
-              if (renamingRoomRef.current) {
-                renamingRoomRef.current = {
-                  ...renamingRoomRef.current,
-                  name: e.target.value,
-                };
-              }
-              setRenamingRoom({ ...renamingRoom, name: e.target.value });
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void commitRoomRename();
-              if (e.key === "Escape") {
-                renamingRoomRef.current = null;
-                setRenamingRoom(null);
-              }
-            }}
-            onBlur={() => void commitRoomRename()}
-            data-testid={`rename-room-input-${room.id}`}
-            className="flex-1 min-w-0 bg-[var(--bg-secondary)] border border-[var(--accent)] px-1 py-0.5 text-sm text-[var(--text-primary)] outline-none"
-          />
-        ) : (
-          <>
-            {room.name}
-            <span className="pl-1 text-[10px] text-[var(--text-muted)]">
-              #{room.id}
-            </span>
-            {"is_hidden" in room && (
-              <span className="ml-1">
-                {roomTypeTags(room as GroupChat).map((t) => (
-                  <span
-                    key={t.code}
-                    className="text-[10px] text-[var(--text-muted)]"
-                  >
-                    {t.code}
-                  </span>
-                ))}
-              </span>
-            )}
-          </>
-        )}
-        {!renamingThis && (canRename || tab === "myrooms") && (
-          <span className="hidden group-hover/room:inline-flex items-center shrink-0 ml-auto gap-0.5">
-            {canRename && (
-              <button
-                draggable={false}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRenamingRoom({ id: room.id, name: room.name });
-                  renamingRoomRef.current = { id: room.id, name: room.name };
-                }}
-                title="Rename room"
-                data-testid={`rename-room-${room.id}`}
-                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs border-none bg-transparent cursor-pointer px-1"
-              >
-                ✎
-              </button>
-            )}
-            {tab === "myrooms" && (
-              <button
-                draggable={false}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeGC(room.id);
-                  refresh();
-                  if (activeGCId === room.id) onSelectGC(0);
-                }}
-                title="Remove room"
-                data-testid={`remove-room-${room.id}`}
-                className="text-[var(--text-muted)] hover:text-[var(--error)] text-xs border-none bg-transparent cursor-pointer px-1"
-              >
-                ✕
-              </button>
-            )}
-          </span>
-        )}
-      </div>
+        onRenameChange={(name) => {
+          if (renamingRoomRef.current) {
+            renamingRoomRef.current = { ...renamingRoomRef.current, name };
+          }
+          setRenamingRoom((prev) => prev ? { ...prev, name } : { id: room.id, name });
+        }}
+        onRenameKeyDown={(e) => {
+          if (e.key === "Enter") void commitRoomRename();
+          if (e.key === "Escape") {
+            renamingRoomRef.current = null;
+            setRenamingRoom(null);
+          }
+        }}
+        onRenameBlur={() => void commitRoomRename()}
+        onRenameClick={(e) => {
+          e.stopPropagation();
+          setRenamingRoom({ id: room.id, name: room.name });
+          renamingRoomRef.current = { id: room.id, name: room.name };
+        }}
+        onRemoveClick={(e) => {
+          e.stopPropagation();
+          removeGC(room.id);
+          refresh();
+          if (activeGCId === room.id) onSelectGC(0);
+        }}
+        dataTestId={`${tab === "myrooms" ? "gc-button" : "public-room"}-${room.id}`}
+        renameInputTestId={`rename-room-input-${room.id}`}
+      />
     );
   };
 
-  const canMutate = tab === "myrooms" || isAdmin;
-
-  const groupHeader = (group: { id: string | number; name: string; roomIds: number[] }) => {
+  const renderGroup = (group: { id: string | number; name: string; roomIds: number[] }) => {
     const collapsed = collapsedGroups.has(group.id);
     const isDragTarget = dragOverGroup === group.id;
     return (
-      <div
-        key={`group-${group.id}`}
-        draggable={canMutate}
-        onDragStart={(e) => handleDragStartGroup(e, group.id)}
-        onDragOver={(e) => handleDragOverGroup(e, group.id)}
+      <GroupHeader
+        key={group.id}
+        groupId={group.id}
+        name={group.name}
+        roomCount={group.roomIds.length}
+        collapsed={collapsed}
+        isDragTarget={isDragTarget}
+        renaming={renaming?.id === group.id}
+        renamingName={renaming?.name ?? ""}
+        canReorder={canReorder}
+        didDragRef={didDrag}
+        onToggleCollapse={() => toggleCollapse(group.id)}
+        onDragStart={handleDragStartGroup(group.id)}
+        onDragOver={handleDragOverGroup(group.id)}
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleDropOnGroup(e, group.id)}
-        className={`flex items-center gap-1 px-2 py-1 my-0.5 border-l-2 border-transparent cursor-pointer group/gh ${
-          isDragTarget
-            ? "!border-[var(--accent)] bg-[var(--accent)]/10"
-            : "hover:bg-[var(--bg-tertiary)]"
-        } transition-colors`}
-      >
-        {/* Fold/unfold toggle */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleCollapse(group.id);
-          }}
-          className="text-[var(--text-muted)] text-xs border-none bg-transparent cursor-pointer w-4 text-center shrink-0"
-        >
-          {collapsed ? "▸" : "▾"}
-        </button>
-
-        {/* Name or rename input */}
-        {renaming && renaming.id === group.id ? (
-          <input
-            autoFocus
-            value={renaming.name}
-            onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") setRenaming(null);
-            }}
-            onBlur={commitRename}
-            className="flex-1 min-w-0 bg-[var(--bg-secondary)] border border-[var(--accent)] px-1 py-0.5 text-xs text-[var(--text-primary)] outline-none"
-          />
-        ) : (
-          <span className="flex-1 min-w-0 text-xs text-[var(--text-secondary)] font-semibold truncate">
-            {group.name}
-          </span>
-        )}
-
-        {/* Room count */}
-        <span className="text-[10px] text-[var(--text-muted)] shrink-0">
-          {group.roomIds.length}
-        </span>
-
-        {/* Hover actions (rename + delete) */}
-        {canMutate && !renaming && (
-          <span className="hidden group-hover/gh:inline-flex items-center gap-0.5 shrink-0">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                startRename(group.id, group.name);
-              }}
-              title="Rename group"
-              className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs border-none bg-transparent cursor-pointer px-0.5"
-            >
-              ✎
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDeleteGroup(group.id);
-              }}
-              title="Delete group"
-              className="text-[var(--text-muted)] hover:text-[var(--error)] text-xs border-none bg-transparent cursor-pointer px-0.5"
-            >
-              ✕
-            </button>
-          </span>
-        )}
-      </div>
+        onRenameChange={(name) => setRenaming((prev) => prev ? { ...prev, name } : { id: group.id, name })}
+        onRenameKeyDown={(e) => {
+          if (e.key === "Enter") commitRename();
+          if (e.key === "Escape") setRenaming(null);
+        }}
+        onRenameBlur={commitRename}
+        onRenameClick={(e) => {
+          e.stopPropagation();
+          startRename(group.id, group.name);
+        }}
+        onDeleteClick={(e) => {
+          e.stopPropagation();
+          handleDeleteGroup(group.id);
+        }}
+      />
     );
   };
 
@@ -722,9 +738,22 @@ export default function Sidebar({
       <div className="px-3 py-2.5 border-b border-[var(--border-primary)] flex items-start justify-between">
         <div>
           <h1 className="text-[var(--accent)] glow text-lg font-normal tracking-wide">
-            tchat
+            tchat 1.1
           </h1>
-          <span className="text-[var(--text-muted)] text-[10px]">v1.0.0</span>
+          <div className="flex items-center gap-2 mt-0.5">
+            <button
+              onClick={onShowTutorial}
+              className="text-[var(--text-muted)] text-[10px] border border-[var(--border-primary)] px-1.5 py-0.5 bg-transparent cursor-pointer hover:text-[var(--accent)] hover:border-[var(--accent)]/60 transition-colors"
+            >
+              tutorial
+            </button>
+            <button
+              onClick={onShowChangelog}
+              className="text-[var(--text-muted)] text-[10px] border border-[var(--border-primary)] px-1.5 py-0.5 bg-transparent cursor-pointer hover:text-[var(--accent)] hover:border-[var(--accent)]/60 transition-colors"
+            >
+              changelog
+            </button>
+          </div>
         </div>
         <button
           onClick={onToggleSidebar}
@@ -782,7 +811,7 @@ export default function Sidebar({
         </button>
 
         {/* New group button */}
-        {canMutate && (
+        {canReorder && (
           <button
             onClick={() => {
               setCreatingGroup(true);
@@ -858,25 +887,35 @@ export default function Sidebar({
         onDrop={handleDropOnTop}
         onDragEnd={() => { didDrag.current = false; setDragOverGroup(null); setDragOverRoom(null); }}
       >
+        {/* Drop zone at the very top — drop a room here to move it to the start. */}
+        {canReorder && (
+          <div
+            onDragOver={handleEndZoneDragOver}
+            onDrop={handleDropAtStart}
+            data-testid="drop-zone-start"
+            className="h-1.5 my-0.5 border border-dashed border-[var(--border-primary)]/40"
+          />
+        )}
+
         {tab === "myrooms" ? (
           <>
             {/* Top-level rooms (not in any group) */}
-            {topLevelRooms.map((gc) => roomButton(gc, "·"))}
+            {topLevelRooms.map((gc) => renderRoom(gc, "·"))}
 
             {/* Groups with their rooms */}
             {localGroups.map((group) => (
               <div
                 key={`group-${group.id}`}
-                onDragOver={(e) => handleDragOverGroup(e, group.id)}
+                onDragOver={handleDragOverGroup(group.id)}
                 onDrop={(e) => handleDropOnGroup(e, group.id)}
               >
-                {groupHeader(group)}
+                {renderGroup(group)}
                 {!collapsedGroups.has(group.id) && (
                   <div className="ml-3">
                     {group.roomIds.map((roomId) => {
                       const gc = roomMap.get(roomId);
                       if (!gc) return null;
-                      return roomButton(gc, "·");
+                      return renderRoom(gc, "·");
                     })}
                     {group.roomIds.length === 0 && (
                       <div className="text-[10px] text-[var(--text-muted)] px-2 py-1 italic">
@@ -897,28 +936,35 @@ export default function Sidebar({
         ) : (
           <>
             {roomsError && (
-              <div className="text-[var(--error)] text-xs px-2 py-1">
-                err: {roomsError}
+              <div className="flex items-center gap-1.5 text-[var(--error)] text-xs px-2 py-1">
+                <span className="flex-1">err: {roomsError}</span>
+                <button
+                  onClick={() => setRoomsError("")}
+                  className="shrink-0 text-[var(--error)] text-[10px] border border-[var(--error)]/40 px-1 py-0.5 bg-transparent cursor-pointer hover:bg-[var(--error)]/20 transition-colors"
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
               </div>
             )}
 
             {/* Top-level board rooms (not in any group) */}
-            {topLevelBoardRooms.map((room) => roomButton(room, "§"))}
+            {topLevelBoardRooms.map((room) => renderRoom(room, "§"))}
 
             {/* Board groups with their rooms */}
             {boardGroups.map((group) => (
               <div
                 key={`bgroup-${group.id}`}
-                onDragOver={(e) => handleDragOverGroup(e, group.id)}
+                onDragOver={handleDragOverGroup(group.id)}
                 onDrop={(e) => handleDropOnGroup(e, group.id)}
               >
-                {groupHeader(group)}
+                {renderGroup(group)}
                 {!collapsedGroups.has(group.id) && (
                   <div className="ml-3">
                     {group.roomIds.map((roomId) => {
                       const room = publicRooms.find((r) => r.id === roomId);
                       if (!room) return null;
-                      return roomButton(room, "§");
+                      return renderRoom(room, "§");
                     })}
                     {group.roomIds.length === 0 && isAdmin && (
                       <div className="text-[10px] text-[var(--text-muted)] px-2 py-1 italic">
@@ -940,10 +986,21 @@ export default function Sidebar({
               )}
           </>
         )}
+
+        {/* Drop zone at the very bottom — drop a room here to move it to the end. */}
+        {canReorder && (
+          <div
+            onDragOver={handleEndZoneDragOver}
+            onDrop={handleDropAtEnd}
+            data-testid="drop-zone-end"
+            className="h-1.5 my-0.5 border border-dashed border-[var(--border-primary)]/40"
+          />
+        )}
       </div>
 
       {/* User + logout footer */}
       <div className="border-t border-[var(--border-primary)] px-3 py-2 flex items-center gap-2">
+        <Avatar name={user?.username ?? "?"} src={user?.picture_url ?? null} size={24} />
         <button
           onClick={onEditProfile}
           data-testid="profile-button"
@@ -958,6 +1015,14 @@ export default function Sidebar({
           </span>
         </button>
         <button
+          onClick={onOpenSettings}
+          data-testid="settings-button"
+          title="Notification settings"
+          className="text-[var(--text-muted)] text-xs border-none bg-transparent cursor-pointer hover:text-[var(--text-primary)]"
+        >
+          ⚙
+        </button>
+        <button
           onClick={handleLogout}
           data-testid="logout-button"
           className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-1 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
@@ -965,6 +1030,28 @@ export default function Sidebar({
           [ logout ]
         </button>
       </div>
+
+      {/* Context menu — right-click on a room */}
+      {ctxMenu && onToggleMute && (
+        <div
+          ref={ctxMenuRef}
+          className="fixed z-50"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="term-panel min-w-[140px] border border-[var(--border-primary)] bg-[var(--bg-primary)] shadow-lg py-1 text-xs">
+            <button
+              onClick={() => {
+                onToggleMute(ctxMenu.roomId);
+                setCtxMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] border-none bg-transparent cursor-pointer"
+            >
+              {mutedRooms?.has(ctxMenu.roomId) ? "🔊 Unmute room" : "🔇 Mute room"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

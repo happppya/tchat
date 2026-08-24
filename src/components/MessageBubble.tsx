@@ -24,6 +24,8 @@ interface Props {
   onToggleReaction: (messageId: number, emoji: string) => void;
   /** Staff actions on a user: kick, ban, mute, mod, demod. */
   onModAction: (username: string, action: string) => void;
+  /** Set of message ids that @ping the current user. */
+  highlightedMessageIds: ReadonlySet<number>;
 }
 
 /**
@@ -42,6 +44,7 @@ export default function MessageBubble({
   onReply,
   onToggleReaction,
   onModAction,
+  highlightedMessageIds,
 }: Props) {
   const time = formatGroupTime(group.firstSentAt);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -184,6 +187,7 @@ export default function MessageBubble({
             onDelete={() => confirmDelete(msg)}
             onReply={() => onReply(msg)}
             onToggleReaction={(emoji) => onToggleReaction(msg.id, emoji)}
+            highlighted={highlightedMessageIds.has(msg.id)}
           />
         ))}
       </div>
@@ -203,6 +207,7 @@ interface LineProps {
   onDelete: () => void;
   onReply: () => void;
   onToggleReaction: (emoji: string) => void;
+  highlighted: boolean;
 }
 
 function MessageLine({
@@ -217,6 +222,7 @@ function MessageLine({
   onDelete,
   onReply,
   onToggleReaction,
+  highlighted,
 }: LineProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const text = message.message_text || "";
@@ -269,7 +275,11 @@ function MessageLine({
   return (
     <div
       data-testid="message-line"
-      className="group relative flex items-start gap-2 rounded-sm transition-colors hover:bg-[var(--bg-tertiary)]"
+      className={`group relative flex items-start gap-2 rounded-sm transition-colors hover:bg-[var(--bg-tertiary)] ${
+        highlighted
+          ? "bg-[var(--accent)]/10 border-l-2 border-[var(--accent)] pl-2 -ml-2"
+          : ""
+      }`}
     >
       {/* Content column */}
       <div className="flex-1 min-w-0 flex flex-col gap-1">

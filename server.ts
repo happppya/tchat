@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import http from 'http';
+import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import type { Duplex } from 'stream';
@@ -68,7 +69,19 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-const server = http.createServer(app);
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH;
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH;
+const useTls = !!(SSL_KEY_PATH && SSL_CERT_PATH);
+
+const server = useTls
+  ? https.createServer(
+      {
+        key: fs.readFileSync(SSL_KEY_PATH!),
+        cert: fs.readFileSync(SSL_CERT_PATH!),
+      },
+      app
+    )
+  : http.createServer(app);
 
 // Allow base64 data-URL uploads (up to the 2 MB file cap) through the JSON
 // body parser.
@@ -174,7 +187,7 @@ async function main(): Promise<void> {
 
   const PORT = process.env.PORT || 3000;
   server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on ${useTls ? 'HTTPS' : 'HTTP'} port ${PORT}`);
   });
 }
 

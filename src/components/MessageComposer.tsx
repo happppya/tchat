@@ -1,13 +1,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useAuth } from "../hooks/useAuth";
 import { uploadFile } from "../services/api";
 import { MAX_UPLOAD_BYTES, MAX_MESSAGE_LENGTH } from "../constants";
 import { truncate } from "../utils/format";
 import type { FileAttachment, ReplyTarget } from "../types";
 import GifPicker from "./GifPicker";
-import Avatar from "./Avatar";
 
-/** Commands: key -> argument hint. */
+/** Commands that require room staff (owner/mod/admin). */
+const STAFF_COMMANDS = new Set(["/kick", "/ban", "/unban", "/mute", "/unmute", "/mod", "/demod"]);
 const ALL_COMMANDS: [string, string][] = [
   ["/kick", "@username"],
   ["/ban", "@username"],
@@ -20,10 +19,17 @@ const ALL_COMMANDS: [string, string][] = [
   ["/leave", ""],
   ["/help", "[page]"],
 ];
-const COMMANDS_BY_PREFIX = new Map<string, string>(
-  ALL_COMMANDS.map(([k, v]) => [k, v])
-);
-const ALL_COMMAND_NAMES = ALL_COMMANDS.map(([k]) => k);
+
+/** Build command lookup filtered by permission. */
+function commandsForUser(viewerIsStaff: boolean) {
+  const cmds = viewerIsStaff
+    ? ALL_COMMANDS
+    : ALL_COMMANDS.filter(([k]) => !STAFF_COMMANDS.has(k));
+  return {
+    map: new Map<string, string>(cmds.map(([k, v]) => [k, v])),
+    names: cmds.map(([k]) => k),
+  };
+}
 
 interface Props {
   onSend: (
@@ -37,6 +43,10 @@ interface Props {
   onCancelReply?: () => void;
   /** Unique display names in the room, for @username autocomplete. */
   memberNames?: string[];
+  /** Whether the viewer is staff (owner/mod/admin) — gates mod commands. */
+  viewerIsStaff?: boolean;
+  /** Whether the viewer is admin — gates admin-only commands. */
+  viewerIsAdmin?: boolean;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -54,8 +64,9 @@ export default function MessageComposer({
   onCancelReply,
   onSlashCommand,
   memberNames = [],
+  viewerIsStaff = false,
+  viewerIsAdmin = false,
 }: Props) {
-  const { user } = useAuth();
   const [text, setText] = useState("");
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [file, setFile] = useState<FileAttachment | null>(null);
@@ -66,7 +77,11 @@ export default function MessageComposer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [popIndex, setPopIndex] = useState(0);
 
-  const promptName = user?.username ?? "guest";
+  // Build the allowed-command lookup based on viewer permissions.
+  const { map: commandsByPrefix, names: commandNames } = useMemo(
+    () => commandsForUser(viewerIsStaff),
+    [viewerIsStaff]
+  );
 
   // Parse the current input: is it a slash command? Command part? Argument?
   const slashState = useMemo(() => {
@@ -74,22 +89,49 @@ export default function MessageComposer({
     const space = text.indexOf(" ");
     const cmd = space === -1 ? text : text.slice(0, space);
     const arg = space === -1 ? "" : text.slice(space + 1);
-    const exact = COMMANDS_BY_PREFIX.get(cmd);
+    const exact = commandsByPrefix.get(cmd);
     return { cmd, arg, exact, hint: exact !== undefined ? exact : null };
-  }, [text]);
+  }, [text, commandsByPrefix]);
+
+  // Detect @mention autocomplete in non-slash-command messages.
+  const mentionState = useMemo(() => {
+    if (!text || text.startsWith("/")) return null;
+    // Find the last @ that is preceded by start-of-string or a space.
+    const lastAt = text.lastIndexOf("@");
+    if (lastAt === -1) return null;
+    const before = text[lastAt - 1];
+    if (before !== undefined && before !== " " && before !== "\n") return null;
+    const query = text.slice(lastAt + 1);
+    if (query.includes(" ") || query.length > 30) return null;
+    // Don't show popover for empty query — user just typed @.
+    if (query.length === 0) return null;
+    const filtered = memberNames
+      .filter((n) => n.toLowerCase().startsWith(query.toLowerCase()))
+      .slice(0, 8);
+    // Always offer @everyone when the query matches.
+    // Store without the @ prefix — acceptPopItem prepends it.
+    const everyone = "everyone".startsWith(query.toLowerCase())
+      ? ["everyone"]
+      : [];
+    return { start: lastAt, query, matches: [...everyone, ...filtered] };
+  }, [text, memberNames]);
 
   // Build the autocomplete popover items.
   const popItems: { id: string; label: string; secondary?: string }[] =
     useMemo(() => {
+      // @mention autocomplete takes priority over slash commands in regular text.
+      if (mentionState) {
+        return mentionState.matches.map((n) => ({ id: n, label: "@" + n }));
+      }
       if (!slashState) return [];
       const { cmd, arg, exact, hint } = slashState;
 
       // Phase 1: command not fully typed yet (no space). Show matching commands.
       if (arg === "" && !exact) {
-        return ALL_COMMAND_NAMES
+        return commandNames
           .filter((c) => c.startsWith(cmd))
           .map((c) => {
-            const h = COMMANDS_BY_PREFIX.get(c);
+            const h = commandsByPrefix.get(c);
             return h ? { id: c, label: c, secondary: h } : { id: c, label: c };
           });
       }
@@ -117,7 +159,7 @@ export default function MessageComposer({
       }
 
       return [];
-    }, [slashState, memberNames]);
+    }, [slashState, memberNames, mentionState]);
 
   // Clamp popIndex when items change.
   useEffect(() => {
@@ -128,7 +170,7 @@ export default function MessageComposer({
     const trimmed = text.trim();
     if (!trimmed && !gifUrl && !file) return;
 
-    if (slashState && onSlashCommand) {
+    if (slashState && slashState.exact && onSlashCommand) {
       onSlashCommand(slashState.cmd.slice(1), slashState.arg);
       setText("");
       return;
@@ -143,22 +185,50 @@ export default function MessageComposer({
 
   const acceptPopItem = useCallback(
     (forceIndex?: number) => {
-      if (!slashState || popItems.length === 0) return;
+      if (popItems.length === 0) return;
       const idx = forceIndex ?? popIndex;
       const item = popItems[idx] ?? popItems[0];
       if (!item || item.id === "" || item.id === "@") return;
+
+      // @mention completion in regular messages.
+      if (mentionState) {
+        const before = text.slice(0, mentionState.start);
+        setText(before + "@" + item.id + " ");
+        return;
+      }
+
+      // Slash-command completion.
+      if (!slashState) return;
       const { arg } = slashState;
 
       if (arg === "" && !slashState.exact) {
-        // Completing a command.
         setText(item.id + " ");
       } else {
-        // Completing an argument (username or room code).
         const beforeArg = text.slice(0, slashState.cmd.length + 1);
         setText(beforeArg + item.id);
       }
     },
-    [slashState, popItems, popIndex, text]
+    [slashState, popItems, popIndex, text, mentionState]
+  );
+
+  /** Compute which text acceptPopItem would produce without calling setText. */
+  const getAcceptedText = useCallback(
+    (forceIndex?: number): string | null => {
+      if (popItems.length === 0) return null;
+      const idx = forceIndex ?? popIndex;
+      const item = popItems[idx] ?? popItems[0];
+      if (!item || item.id === "" || item.id === "@") return null;
+
+      if (mentionState) {
+        return text.slice(0, mentionState.start) + "@" + item.id + " ";
+      }
+      if (!slashState) return null;
+      if (slashState.arg === "" && !slashState.exact) {
+        return item.id + " ";
+      }
+      return text.slice(0, slashState.cmd.length + 1) + item.id;
+    },
+    [popItems, popIndex, text, mentionState, slashState]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -178,9 +248,26 @@ export default function MessageComposer({
         acceptPopItem();
         return;
       }
+      // Enter while popover is open: if the command is already complete
+      // (Phase 2/3 — we're picking a target), accept the pop item AND send.
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         acceptPopItem();
+        if (slashState && slashState.exact && onSlashCommand) {
+          // Call getAcceptedText to compute what the completed text looks like
+          // without relying on React state (still batched from acceptPopItem).
+          const nextText = getAcceptedText();
+          if (nextText) {
+            const trimmed = nextText.trim();
+            if (trimmed.startsWith("/")) {
+              const space = trimmed.indexOf(" ");
+              const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
+              const arg = space === -1 ? "" : trimmed.slice(space + 1);
+              onSlashCommand(cmd, arg);
+              setText("");
+            }
+          }
+        }
         return;
       }
     }
@@ -354,15 +441,8 @@ export default function MessageComposer({
         </div>
       )}
 
-      {/* Identity sits bottom-left; errors flush right */}
-      <div className="flex items-center gap-1.5 mt-1.5 min-h-5">
-        <Avatar name={promptName} src={user?.picture_url ?? null} size={20} />
-        <span
-          data-testid="composer-user"
-          className="text-xs text-[var(--text-muted)] break-all min-w-0"
-        >
-          {promptName}
-        </span>
+      {/* Upload error — sits below the composer */}
+      <div className="flex items-center mt-1.5 min-h-5">
         <span className="text-[var(--error)] text-xs ml-auto text-right">
           {error}
         </span>

@@ -1,6 +1,6 @@
-import { useRef, useEffect, useMemo, useState } from "react";
+import { useRef, useEffect, useMemo, useState, useCallback } from "react";
 import type { FileAttachment, Message, ReplyTarget } from "../types";
-import { groupMessages, messagePreview } from "../utils/format";
+import { groupMessages, messagePreview, isoDate, formatDay } from "../utils/format";
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
 
@@ -38,6 +38,14 @@ interface Props {
   onEditMessage: (messageId: number, text: string) => void;
   onDeleteMessage: (messageId: number) => void;
   onToggleReaction: (messageId: number, emoji: string) => void;
+  /** Highest message ID the user has "seen" — ids above this are unread. */
+  lastReadId: number;
+  /** Called when the user scrolls to the bottom so all messages become read. */
+  onMarkAllRead: () => void;
+  /** Set of message ids that @ping the current user — highlighted rows. */
+  highlightedMessageIds: ReadonlySet<number>;
+  /** Called when the user dismisses the error banner. */
+  onClearError?: () => void;
 }
 
 export default function ChatWindow({
@@ -63,6 +71,10 @@ export default function ChatWindow({
   onEditMessage,
   onDeleteMessage,
   onToggleReaction,
+  lastReadId,
+  onMarkAllRead,
+  highlightedMessageIds,
+  onClearError,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -72,6 +84,9 @@ export default function ChatWindow({
   const stickToBottomRef = useRef(true);
   const shouldRestoreScrollRef = useRef(false);
   const scrollAnchorRef = useRef(0);
+  // True once we've scrolled to the unread bar on initial load
+  // (avoid re-scrolling on every render).
+  const scrolledToUnreadRef = useRef(false);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
@@ -107,6 +122,17 @@ export default function ChatWindow({
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     stickToBottomRef.current = nearBottom;
 
+    // Show the "scroll to bottom" FAB when the user is scrolled up at
+    // least one viewport height from the bottom.
+    setShowScrollFab(el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight);
+
+    // When the user scrolls near the bottom, dismiss the unread bar
+    // permanently — they've seen everything below it.
+    if (nearBottom) {
+      onMarkAllRead();
+      setUnreadDismissed(true);
+    }
+
     // Scrolled to the top: request the previous page, remembering the scroll
     // height so we can restore the viewport after the prepend.
     if (el.scrollTop <= 24 && hasMore && !loadingOlder) {
@@ -115,6 +141,39 @@ export default function ChatWindow({
       onLoadOlder();
     }
   };
+
+  // Find the index of the first message group that contains any unread message.
+  const unreadGroupIndex = useMemo(() => {
+    for (let i = 0; i < groups.length; i++) {
+      if (groups[i].messages.some((m) => m.id > lastReadId)) return i;
+    }
+    return -1;
+  }, [groups, lastReadId]);
+
+  // Find indices where the calendar day changes between consecutive groups.
+  const dayBoundaries = useMemo(() => {
+    const set = new Set<number>();
+    for (let i = 1; i < groups.length; i++) {
+      if (isoDate(groups[i - 1].firstSentAt) !== isoDate(groups[i].firstSentAt)) {
+        set.add(i);
+      }
+    }
+    return set;
+  }, [groups]);
+
+  // FAB shown when the user is scrolled far from the bottom.
+  const [showScrollFab, setShowScrollFab] = useState(false);
+
+  // Once the user scrolls to the bottom (has seen all unread messages),
+  // dismiss the unread bar permanently for this room visit. New live
+  // messages should not bring it back — it's only for the initial catch-up.
+  const [unreadDismissed, setUnreadDismissed] = useState(false);
+
+  // Count of unread messages (for the bar label).
+  const unreadCount = groups.slice(unreadGroupIndex === -1 ? groups.length : unreadGroupIndex).reduce(
+    (sum, g) => sum + g.messages.filter((m) => m.id > lastReadId).length,
+    0
+  );
 
   // Event delegation for room link clicks in the message list.
   const handleListClick = (e: React.MouseEvent) => {
@@ -125,6 +184,23 @@ export default function ChatWindow({
       if (roomId) onJoinRoom(roomId);
     }
   };
+
+  // Scroll to the unread bar (or bottom) ONCE when entering a room.
+  useEffect(() => {
+    if (scrolledToUnreadRef.current) return;
+    if (groups.length === 0) return;
+
+    const el = listRef.current;
+    if (!el) return;
+
+    if (unreadGroupIndex >= 0) {
+      const bar = el.querySelector('[data-testid="unread-bar"]');
+      if (bar) bar.scrollIntoView({ block: "start" });
+    } else {
+      messagesEndRef.current?.scrollIntoView();
+    }
+    scrolledToUnreadRef.current = true;
+  }, [groups, lastReadId, unreadGroupIndex]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -138,8 +214,13 @@ export default function ChatWindow({
     }
   }, [messages]);
 
+  const scrollToBottom = useCallback(() => {
+    stickToBottomRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0">
+    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0 relative">
       {/* Terminal title bar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <span className="text-[var(--accent)]">{"~"}</span>
@@ -218,9 +299,20 @@ export default function ChatWindow({
 
       {/* Error banner */}
       {error && (
-        <div className="border border-[var(--error)]/40 bg-[var(--error)]/10 px-3 py-1.5 text-[var(--error)] text-sm my-1">
-          <span className="opacity-60">err: </span>
-          {error}
+        <div className="flex items-center gap-2 border border-[var(--error)]/40 bg-[var(--error)]/10 px-3 py-1.5 text-[var(--error)] text-sm my-1">
+          <span className="flex-1">
+            <span className="opacity-60">err: </span>
+            {error}
+          </span>
+          {onClearError && (
+            <button
+              onClick={onClearError}
+              className="shrink-0 text-[var(--error)] text-xs border border-[var(--error)]/40 px-1.5 py-0.5 bg-transparent cursor-pointer hover:bg-[var(--error)]/20 transition-colors"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
 
@@ -246,23 +338,62 @@ export default function ChatWindow({
             <span className="opacity-30 text-xs">no messages yet</span>
           </div>
         )}
-        {groups.map((group) => (
-          <MessageBubble
-            key={group.key}
-            group={group}
-            currentUserId={currentUserId}
-            viewerIsStaff={viewerIsStaff}
-            viewerIsAdmin={viewerIsAdmin}
-            onViewProfile={onViewProfile}
-            onEditMessage={onEditMessage}
-            onDeleteMessage={onDeleteMessage}
-            onReply={handleReply}
-            onToggleReaction={onToggleReaction}
-            onModAction={onModAction}
-          />
+        {groups.map((group, idx) => (
+          <>
+            {/* Day divider — inserted when the calendar day changes. */}
+            {dayBoundaries.has(idx) && (
+              <div
+                data-testid="day-divider"
+                className="flex items-center gap-2 py-1.5 px-1"
+              >
+                <div className="flex-1 border-t border-[var(--border-primary)]/60" />
+                <span className="text-[10px] text-[var(--text-muted)] whitespace-nowrap tracking-wider uppercase">
+                  {formatDay(group.firstSentAt)}
+                </span>
+                <div className="flex-1 border-t border-[var(--border-primary)]/60" />
+              </div>
+            )}
+            {/* Unread divider — only on entry with unread, dismissed once scrolled to bottom */}
+            {!unreadDismissed && idx === unreadGroupIndex && (
+              <div
+                data-testid="unread-bar"
+                className="flex items-center gap-2 py-1.5 px-1"
+              >
+                <div className="flex-1 border-t border-[var(--error)]/60" />
+                <span className="text-[11px] text-[var(--error)] font-semibold whitespace-nowrap">
+                  ── {unreadCount} new message{unreadCount === 1 ? "" : "s"} below ──
+                </span>
+                <div className="flex-1 border-t border-[var(--error)]/60" />
+              </div>
+            )}
+            <MessageBubble
+              key={group.key}
+              group={group}
+              currentUserId={currentUserId}
+              viewerIsStaff={viewerIsStaff}
+              viewerIsAdmin={viewerIsAdmin}
+              onViewProfile={onViewProfile}
+              onEditMessage={onEditMessage}
+              onDeleteMessage={onDeleteMessage}
+              onReply={handleReply}
+              onToggleReaction={onToggleReaction}
+              onModAction={onModAction}
+              highlightedMessageIds={highlightedMessageIds}
+            />
+          </>
         ))}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* "Scroll to bottom" FAB — appears when scrolled far up */}
+      {showScrollFab && (
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-[80px] right-6 z-10 text-xs border border-[var(--accent)] text-[var(--accent)] bg-[var(--bg-primary)] px-2.5 py-1 cursor-pointer hover:bg-[var(--accent)]/10 transition-colors shadow-md"
+        >
+          ↓ scroll to bottom
+        </button>
+      )}
 
       {/* Composer */}
       <MessageComposer
@@ -271,6 +402,8 @@ export default function ChatWindow({
         onCancelReply={() => setReplyingTo(null)}
         onSlashCommand={onSlashCommand}
         memberNames={memberNames}
+        viewerIsStaff={viewerIsStaff}
+        viewerIsAdmin={viewerIsAdmin}
       />
     </div>
   );

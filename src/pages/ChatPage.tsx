@@ -1,16 +1,29 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMessages } from "../hooks/useMessages";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../hooks/useAuth";
+import { useNotifications } from "./useNotifications";
 import { deleteGroupChat, joinRoom, leaveRoom, roomCommand, renameRoom } from "../services/api";
-import { removeGC, renameSavedGC, ROOM_RENAMED_EVENT } from "../services/storage";
+import {
+  removeGC,
+  renameSavedGC,
+  ROOM_RENAMED_EVENT,
+} from "../services/storage";
+import type { NotifSettings } from "../services/storage";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
 import CommandPalette from "../components/CommandPalette";
 import ProfileModal from "../components/ProfileModal";
+import SettingsModal from "../components/SettingsModal";
+import ThemePicker from "../components/ThemePicker";
+import NotificationToast from "../components/NotificationToast";
+import PasswordPrompt from "./PasswordPrompt";
+import TutorialPage from "../components/TutorialPage";
+import ChangelogPage from "../components/ChangelogPage";
 import type { CommandAction } from "../components/CommandPalette";
 import { roomTypeFullNames } from "../utils/roomTypes";
+import { errorMessage } from "../utils/format";
 import type { WSMessage, FileAttachment } from "../types";
 
 export default function ChatPage() {
@@ -23,6 +36,83 @@ export default function ChatPage() {
   const { user, logout, persistWarning } = useAuth();
   const [actionError, setActionError] = useState("");
   const [wsError, setWsError] = useState("");
+
+  // ---- Notifications ----
+
+  const {
+    notifications,
+    notifSettings,
+    roomNotifs,
+    mutedRooms,
+    myDisplayNames,
+    selectGcRef,
+    dismissNotification,
+    clearRoomNotifs,
+    saveSettings,
+    handleWSNotifications,
+    handleToggleMute,
+  } = useNotifications(activeGCId, user?.id ?? null);
+
+  // ---- UI state ----
+
+  // Settings modal toggle.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Theme picker overlay toggle.
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+
+  // Info page state — replaces the chat content area with tutorial or changelog.
+  const [infoPage, setInfoPage] = useState<"tutorial" | "changelog" | null>(null);
+
+  // Password prompt state — shown when a hidden room rejects join with "Invalid room password".
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    gcId: number;
+    error?: string;
+  } | null>(null);
+
+  const handleSaveSettings = useCallback((s: NotifSettings) => {
+    saveSettings(s);
+    setSettingsOpen(false);
+  }, [saveSettings]);
+
+  /** Detect @pings in message text. Returns true if the text mentions the
+   *  current user's display name in that room (or their real username).
+   *  Also matches @everyone. */
+  const isPingForMe = useCallback(
+    (gcId: number, text: string | null | undefined): boolean => {
+      if (!text) return false;
+      const lower = text.toLowerCase();
+
+      // @everyone pings everyone. Use (?:^|\s) instead of \b because
+      // @ is a non-word character, so a word-boundary assert at the
+      // start of a message (before the @) would silently fail.
+      if (/(?:^|\s)@everyone\b/i.test(text)) return true;
+
+      const displayName = myDisplayNames.current.get(gcId);
+      const names = displayName ? [displayName] : [];
+      if (user?.username) names.push(user.username);
+      if (names.length === 0) return false;
+      return names.some((n) => {
+        const idx = lower.indexOf(`@${n.toLowerCase()}`);
+        if (idx === -1) return false;
+        // Must be word-bounded.
+        const after = lower[idx + n.length + 1];
+        return (
+          after === undefined ||
+          after === " " ||
+          after === "\n" ||
+          after === "." ||
+          after === "," ||
+          after === "!" ||
+          after === "?" ||
+          after === ":" ||
+          after === ";"
+        );
+      });
+    },
+    [user?.username]
+  );
+
   // Clear WS error when changing rooms.
   useEffect(() => { setWsError(""); }, [activeGCId]);
 
@@ -38,7 +128,24 @@ export default function ChatPage() {
     editMessage,
     deleteMessage,
     toggleReaction,
+    lastReadId,
+    markAllRead,
   } = useMessages(activeGCId);
+
+  // Compute which messages @ping the current user in the active room.
+  const highlightedMessageIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const msg of messages) {
+      if (
+        activeGCId !== null &&
+        msg.id > 0 &&
+        isPingForMe(activeGCId, msg.message_text)
+      ) {
+        ids.push(msg.id);
+      }
+    }
+    return new Set(ids);
+  }, [messages, activeGCId, isPingForMe]);
 
   // Wire WebSocket
   const handleWSIncoming = useCallback(
@@ -81,9 +188,13 @@ export default function ChatPage() {
         handleWSMessage(msg);
         return;
       }
+
+      // Delegate notification logic (display-name tracking, toasts, desktop, badges).
+      handleWSNotifications(msg, isPingForMe);
+
       handleWSMessage(msg);
     },
-    [handleWSMessage, activeGCId]
+    [handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
   );
 
   const { send } = useWebSocket(handleWSIncoming);
@@ -117,18 +228,53 @@ export default function ChatPage() {
 
   const handleSelectGC = useCallback(async (id: number) => {
     setActionError("");
+    setPasswordPrompt(null);
     try {
       await joinRoom(id);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not join room");
+      const msg = errorMessage(err, "Could not join room");
+      if (msg === "Invalid room password") {
+        // Room exists but is password-protected; prompt for the password
+        // instead of removing it from the sidebar immediately.
+        setPasswordPrompt({ gcId: id });
+        return;
+      }
+      setActionError(msg);
       removeGC(id);
       return;
     }
     setActiveGCId(id);
+    // Reset notification counters for this room since the user just opened it.
+    clearRoomNotifs(id);
     // Deliberately keep the sidebar open: closing it on room select made a
     // single click feel fine but a double-click (two room opens) feel like
     // the sidebar vanished, and reopening it later could squeeze the chat.
   }, []);
+  selectGcRef.current = handleSelectGC;
+
+  // Password prompt handlers.
+
+  const handlePasswordSubmit = useCallback(
+    async (password: string) => {
+      if (!passwordPrompt) return;
+      try {
+        await joinRoom(passwordPrompt.gcId, password);
+        // Success — dismiss the prompt and open the room.
+        setPasswordPrompt(null);
+        setActiveGCId(passwordPrompt.gcId);
+      } catch (err) {
+        setPasswordPrompt((p) => (p ? { ...p, error: errorMessage(err, "Could not join room") } : null));
+      }
+    },
+    [passwordPrompt],
+  );
+
+  const handlePasswordCancel = useCallback(() => {
+    if (passwordPrompt) {
+      removeGC(passwordPrompt.gcId);
+      setPasswordPrompt(null);
+    }
+  }, [passwordPrompt]);
 
   // Only the room's creator may delete it.
   const isOwner = !!user && !!gcInfo && gcInfo.owner_user_id === user.id;
@@ -151,7 +297,7 @@ export default function ChatPage() {
       setActiveGCId(null);
       setActionError("");
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to delete room");
+      setActionError(errorMessage(err, "Failed to delete room"));
     }
   }, [activeGCId, gcName]);
 
@@ -164,7 +310,7 @@ export default function ChatPage() {
       setActiveGCId(null);
       setActionError("");
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to leave room");
+      setActionError(errorMessage(err, "Failed to leave room"));
     }
   }, [activeGCId, gcName]);
 
@@ -174,9 +320,7 @@ export default function ChatPage() {
         await editMessage(messageId, text);
         setActionError("");
       } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : "Failed to edit message"
-        );
+        setActionError(errorMessage(err, "Failed to edit message"));
       }
     },
     [editMessage]
@@ -189,9 +333,7 @@ export default function ChatPage() {
         await renameRoom(activeGCId, name);
         setActionError("");
       } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : "Failed to rename room"
-        );
+        setActionError(errorMessage(err, "Failed to rename room"));
       }
     },
     [activeGCId]
@@ -223,12 +365,25 @@ export default function ChatPage() {
         setActionError("");
         console.log("[roomCommand]", res.message);
       } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : `Command failed: ${command}`
-        );
+        setActionError(errorMessage(err, `Command failed: ${command}`));
       }
     },
     [activeGCId, send, handleSelectGC, handleLeaveRoom]
+  );
+
+  // Generic room-command runner with error clearing.
+  const runRoomCommand = useCallback(
+    async (command: string, target: string) => {
+      if (activeGCId === null) return;
+      setActionError("");
+      try {
+        const res = await roomCommand(activeGCId, command, target);
+        console.log(`[${command}]`, res.message);
+      } catch (err) {
+        setActionError(errorMessage(err, `${command} failed`));
+      }
+    },
+    [activeGCId]
   );
 
   // Room link handler from [#12345] in messages.
@@ -241,19 +396,10 @@ export default function ChatPage() {
 
   // Mod action from the name-click context menu.
   const handleModAction = useCallback(
-    async (username: string, action: string) => {
-      if (activeGCId === null) return;
-      setActionError("");
-      try {
-        const res = await roomCommand(activeGCId, action, username);
-        console.log("[modAction]", res.message);
-      } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : `Action failed: ${action}`
-        );
-      }
+    (username: string, action: string) => {
+      void runRoomCommand(action, username);
     },
-    [activeGCId]
+    [runRoomCommand]
   );
 
   const handleDeleteMessage = useCallback(
@@ -262,9 +408,7 @@ export default function ChatPage() {
         await deleteMessage(messageId);
         setActionError("");
       } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : "Failed to delete message"
-        );
+        setActionError(errorMessage(err, "Failed to delete message"));
       }
     },
     [deleteMessage]
@@ -276,9 +420,7 @@ export default function ChatPage() {
         await toggleReaction(messageId, emoji);
         setActionError("");
       } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : "Failed to react"
-        );
+        setActionError(errorMessage(err, "Failed to react"));
       }
     },
     [toggleReaction]
@@ -332,20 +474,7 @@ export default function ChatPage() {
         id: "toggle-sidebar",
         section: "View",
         label: "Toggle sidebar",
-        shortcut: "`",
         run: () => setSidebarVisible((v) => !v),
-      },
-      {
-        id: "close-sidebar",
-        section: "View",
-        label: "Hide sidebar",
-        run: () => setSidebarVisible(false),
-      },
-      {
-        id: "open-sidebar",
-        section: "View",
-        label: "Show sidebar",
-        run: () => setSidebarVisible(true),
       },
       {
         id: "edit-profile",
@@ -355,17 +484,30 @@ export default function ChatPage() {
         run: handleEditProfile,
       },
       {
+        id: "notif-settings",
+        section: "Settings",
+        label: "Notification settings",
+        keywords: "notifications badges pings toasts",
+        run: () => setSettingsOpen(true),
+      },
+      {
+        id: "choose-theme",
+        section: "Settings",
+        label: "Choose theme",
+        keywords: "theme color appearance",
+        run: () => setThemePickerOpen(true),
+      },
+      {
         id: "logout",
         section: "Account",
         label: "Log out",
-        keywords: "signout signout exit quit",
+        keywords: "signout exit quit",
         run: () => {
           logout();
           navigate("/login", { replace: true });
         },
       },
     ],
-    // logout + navigate are stable; refresh identity when they change
     [logout, navigate, handleEditProfile]
   );
 
@@ -375,7 +517,14 @@ export default function ChatPage() {
         activeGCId={activeGCId}
         onSelectGC={handleSelectGC}
         onEditProfile={handleEditProfile}
+        onOpenSettings={() => setSettingsOpen(true)}
         onToggleSidebar={() => setSidebarVisible((v) => !v)}
+        onShowTutorial={() => setInfoPage("tutorial")}
+        onShowChangelog={() => setInfoPage("changelog")}
+        roomNotifs={roomNotifs}
+        notifSettings={notifSettings}
+        mutedRooms={mutedRooms}
+        onToggleMute={handleToggleMute}
         className={sidebarVisible ? "w-[264px] flex-shrink-0" : "hidden"}
       />
       {!sidebarVisible && (
@@ -388,7 +537,25 @@ export default function ChatPage() {
         </button>
       )}
 
-      {activeGCId === null ? (
+      {/* Info pages — tutorial / changelog */}
+      {infoPage === "tutorial" && (
+        <TutorialPage onClose={() => setInfoPage(null)} />
+      )}
+      {infoPage === "changelog" && (
+        <ChangelogPage onClose={() => setInfoPage(null)} />
+      )}
+
+      {/* Password prompt — shown when joining a hidden room */}
+      {!infoPage && passwordPrompt && (
+        <PasswordPrompt
+          gcId={passwordPrompt.gcId}
+          error={passwordPrompt.error}
+          onSubmit={handlePasswordSubmit}
+          onCancel={handlePasswordCancel}
+        />
+      )}
+
+      {!infoPage && !passwordPrompt && activeGCId === null ? (
         <div className="flex-1 flex items-center justify-center flex-col text-[var(--text-muted)] text-sm">
           <div className="flex items-center gap-2">
             <span className="text-[var(--accent)] glow">tchat</span>
@@ -403,8 +570,15 @@ export default function ChatPage() {
             <span>for commands · select a channel to begin</span>
           </div>
           {actionError && (
-            <div className="mt-3 border border-[var(--error)]/40 bg-[var(--error)]/10 px-3 py-1.5 text-[var(--error)] text-sm">
-              {actionError}
+            <div className="mt-3 flex items-center gap-2 border border-[var(--error)]/40 bg-[var(--error)]/10 px-3 py-1.5 text-[var(--error)] text-sm">
+              <span className="flex-1">{actionError}</span>
+              <button
+                onClick={() => setActionError("")}
+                className="shrink-0 text-[var(--error)] text-xs border border-[var(--error)]/40 px-1.5 py-0.5 bg-transparent cursor-pointer hover:bg-[var(--error)]/20 transition-colors"
+                title="Dismiss"
+              >
+                ✕
+              </button>
             </div>
           )}
           {!actionError && persistWarning && (
@@ -413,7 +587,7 @@ export default function ChatPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : !infoPage && !passwordPrompt ? (
         <ChatWindow
           key={activeGCId}
           messages={messages}
@@ -438,8 +612,12 @@ export default function ChatPage() {
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
           onToggleReaction={handleToggleReaction}
+          lastReadId={lastReadId}
+          onMarkAllRead={markAllRead}
+          highlightedMessageIds={highlightedMessageIds}
+          onClearError={() => { setActionError(""); setWsError(""); }}
         />
-      )}
+      ) : null}
 
       <CommandPalette
         isOpen={paletteOpen}
@@ -447,11 +625,35 @@ export default function ChatPage() {
         actions={actions}
       />
 
+      {/* Notification toasts — stacked bottom-right */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col-reverse gap-2 pointer-events-none">
+        {notifications.map((n) => (
+          <div key={n.id} className="pointer-events-auto">
+            <NotificationToast
+              notification={n}
+              onNavigate={handleSelectGC}
+              onDismiss={dismissNotification}
+            />
+          </div>
+        ))}
+      </div>
+
       <ProfileModal
         username={profileUser}
         initialEditing={profileEditing}
         activeGCId={activeGCId}
         onClose={handleCloseProfile}
+      />
+
+      <SettingsModal
+        isOpen={settingsOpen}
+        settings={notifSettings}
+        onSave={handleSaveSettings}
+      />
+
+      <ThemePicker
+        isOpen={themePickerOpen}
+        onClose={() => setThemePickerOpen(false)}
       />
     </div>
   );

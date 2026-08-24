@@ -61,6 +61,9 @@ function renderWindow(overrides: Partial<React.ComponentProps<typeof ChatWindow>
       onEditMessage={noop}
       onDeleteMessage={noop}
       onToggleReaction={noop}
+      lastReadId={0}
+      onMarkAllRead={noop}
+      highlightedMessageIds={new Set()}
       {...overrides}
     />
   );

@@ -52,20 +52,22 @@ test("switching to the Cyberpunk theme changes the accent CSS variable", async (
   );
   expect(beforeAccent.length).toBeGreaterThan(0);
 
-  // Open the palette and switch to Cyberpunk.
+  // Open the palette and choose "Choose theme" to open the theme picker overlay.
   await openPalette(page);
-  await page.fill('[data-testid="palette-search"]', "cyberpunk");
+  await page.fill('[data-testid="palette-search"]', "choose theme");
   await page.keyboard.press("Enter");
 
-  // The palette closes after running an action.
-  const palette1 = page.locator('[data-testid=command-palette]');
-  await expect(palette1).toBeHidden();
+  // The palette closes; click the Cyberpunk theme card in the overlay.
+  await page.click('[data-testid="theme-option-cyberpunk"]');
 
-  // The accent variable on <html> should now be the Cyberpunk cyan.
+  // Click the "close" button or backdrop to dismiss.
+  await page.click('text=close');
+
+  // The accent variable on <html> should now be the new Cyberpunk teal.
   const afterAccent = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
   );
-  expect(afterAccent.toLowerCase()).toBe("#00f0ff");
+  expect(afterAccent.toLowerCase()).toBe("#6ec6ca");
 
   // It should differ from the default.
   expect(afterAccent.toLowerCase()).not.toBe(beforeAccent.toLowerCase());
@@ -79,20 +81,22 @@ test("theme persists across a page reload", async ({ page }) => {
   // backtick listener is attached by ChatPage's useEffect, which only runs
   // after the auth check resolves).
   await openPalette(page);
-  await page.fill('[data-testid="palette-search"]', "amber");
+  await page.fill('[data-testid="palette-search"]', "choose theme");
   await page.keyboard.press("Enter");
-  const palette2 = page.locator('[data-testid=command-palette]');
-  await expect(palette2).toBeHidden();
 
-  const amber = await page.evaluate(() =>
+  // Switch to Amber via the overlay.
+  await page.click('[data-testid="theme-option-amber"]');
+  await page.click('text=close');
+
+  const accent = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
   );
-  expect(amber.toLowerCase()).toBe("#ffb000");
+  expect(accent.toLowerCase()).toBe("#c4956a");
 
   // Reload — the stored theme should be reapplied on load.
   await page.reload();
   const afterReload = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
   );
-  expect(afterReload.toLowerCase()).toBe("#ffb000");
+  expect(afterReload.toLowerCase()).toBe("#c4956a");
 });

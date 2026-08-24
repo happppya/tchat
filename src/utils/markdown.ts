@@ -58,6 +58,15 @@ export function renderMarkdown(source: string): string {
       /\[#(\d{1,6})\]/g,
       (_match, roomCode: string) =>
         `<span class="room-link" data-room-id="${roomCode}" title="Join room #${roomCode}">[#${roomCode}]</span>`
+    )
+    // @mentions: highlight @username references. @everyone gets extra emphasis.
+    .replace(
+      /(^|\s)@everyone(?=\s|[.,!?:;]|$)/gi,
+      '$1<span class="mention mention-everyone">@everyone</span>'
+    )
+    .replace(
+      /(^|\s)@([a-zA-Z0-9_]{1,30})(?=\s|[.,!?:;]|$)/g,
+      '$1<span class="mention">@$2</span>'
     );
 
   // Restore the code blocks as escaped, monospace blocks.

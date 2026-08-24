@@ -114,3 +114,24 @@ export function formatGroupTime(s: string): string {
     minute: "2-digit",
   }).format(new Date(ms));
 }
+
+/** Calendar day label for a day divider, e.g. "Mon, Aug 25". */
+export function formatDay(s: string): string {
+  const ms = parseTimestampMs(s);
+  if (ms === null) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(ms));
+}
+
+/** Extract YYYY-MM-DD from a timestamp for comparing calendar days. */
+export function isoDate(s: string): string {
+  return s.slice(0, 10);
+}
+
+/** Extract a human-readable message from an error value. */
+export function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}

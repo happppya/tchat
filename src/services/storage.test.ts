@@ -10,6 +10,9 @@ import {
   removeRoomFromLocalGroup,
   moveLocalRoom,
   reorderLocalGroups,
+  getMutedRooms,
+  toggleMuteRoom,
+  isRoomMuted,
 } from "./storage";
 
 /** Minimal localStorage + window stub so storage helpers run in node. */
@@ -192,5 +195,56 @@ describe("renameSavedGC", () => {
     renameSavedGC(999, "Ghost");
 
     expect(getSavedGCs()).toEqual([{ id: 111, name: "Old One" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Muted rooms
+// ---------------------------------------------------------------------------
+
+describe("muted rooms", () => {
+  it("starts with no muted rooms", () => {
+    expect(getMutedRooms().size).toBe(0);
+    expect(isRoomMuted(1)).toBe(false);
+    expect(isRoomMuted(42)).toBe(false);
+  });
+
+  it("mutes a room", () => {
+    toggleMuteRoom(10);
+    expect(isRoomMuted(10)).toBe(true);
+    expect(getMutedRooms().has(10)).toBe(true);
+    // Other rooms stay unmuted.
+    expect(isRoomMuted(20)).toBe(false);
+  });
+
+  it("unmutes a previously muted room", () => {
+    toggleMuteRoom(10);
+    expect(isRoomMuted(10)).toBe(true);
+    toggleMuteRoom(10);
+    expect(isRoomMuted(10)).toBe(false);
+    expect(getMutedRooms().has(10)).toBe(false);
+  });
+
+  it("mutes multiple rooms independently", () => {
+    toggleMuteRoom(5);
+    toggleMuteRoom(7);
+    expect(isRoomMuted(5)).toBe(true);
+    expect(isRoomMuted(7)).toBe(true);
+    expect(isRoomMuted(9)).toBe(false);
+    // Unmute one, the other stays muted.
+    toggleMuteRoom(5);
+    expect(isRoomMuted(5)).toBe(false);
+    expect(isRoomMuted(7)).toBe(true);
+  });
+
+  it("survives localStorage round-trip", () => {
+    toggleMuteRoom(100);
+    toggleMuteRoom(200);
+
+    // Simulate re-reading from storage (fresh call).
+    const reloaded = getMutedRooms();
+    expect(reloaded.has(100)).toBe(true);
+    expect(reloaded.has(200)).toBe(true);
+    expect(reloaded.has(300)).toBe(false);
   });
 });

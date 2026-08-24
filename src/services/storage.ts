@@ -4,7 +4,46 @@ const STORAGE_KEYS = {
   SAVED_GC_LIST: "savedGCList",
   DISPLAY_NAME: "displayName",
   LOCAL_GROUPS: "tchat:local-groups",
+  LAST_READ_IDS: "tchat:last-read-ids",
+  ROOM_NOTIF_COUNTS: "tchat:room-notif-counts",
+  MUTED_ROOMS: "tchat:muted-rooms",
 } as const;
+
+/** Per-room counts of background messages since the user last visited. */
+export interface RoomNotifCounts {
+  general: number;
+  important: number;
+}
+
+export type RoomNotifMap = Record<number, RoomNotifCounts>;
+
+// ---------------------------------------------------------------------------
+// Notification settings — persisted toggles.
+// ---------------------------------------------------------------------------
+
+export interface NotifSettings {
+  /** Show unread general badges on sidebar rooms. */
+  showGeneralBadges: boolean;
+  /** Show unread important badges on sidebar rooms. */
+  showImportantBadges: boolean;
+  /** Show general toast notifications. */
+  generalToasts: boolean;
+  /** Show important (ping) toast notifications. */
+  importantToasts: boolean;
+  /** Fire OS-level desktop notifications for general messages in background rooms. */
+  desktopGeneral: boolean;
+  /** Fire OS-level desktop notifications for pings & @everyone. */
+  desktopImportant: boolean;
+}
+
+const DEFAULT_NOTIF_SETTINGS: NotifSettings = {
+  showGeneralBadges: true,
+  showImportantBadges: true,
+  generalToasts: true,
+  importantToasts: true,
+  desktopGeneral: false,
+  desktopImportant: false,
+};
 
 /** Fired on this window whenever the saved-GC list changes. */
 export const GCS_CHANGED_EVENT = "tchat:gcs-changed";
@@ -78,6 +117,48 @@ export function renameSavedGC(id: number, name: string): void {
 export function clearAllGCs(): void {
   localStorage.removeItem(STORAGE_KEYS.SAVED_GC_LIST);
   notifyGCsChanged();
+}
+
+// ---------------------------------------------------------------------------
+// Persisted unread markers — per-room lastReadId survives page reloads.
+// ---------------------------------------------------------------------------
+
+type LastReadMap = Record<number, number>;
+
+function readLastReadMap(): LastReadMap {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LAST_READ_IDS);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLastReadMap(map: LastReadMap): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.LAST_READ_IDS, JSON.stringify(map));
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+/** Get the persisted last-read message id for a room. */
+export function getLastReadId(gcId: number): number {
+  return readLastReadMap()[gcId] ?? 0;
+}
+
+/** Persist the last-read message id for a room. */
+export function setLastReadId(gcId: number, id: number): void {
+  const map = readLastReadMap();
+  map[gcId] = id;
+  writeLastReadMap(map);
+}
+
+/** Remove persisted read state for a room (e.g. on leave). */
+export function clearLastReadId(gcId: number): void {
+  const map = readLastReadMap();
+  delete map[gcId];
+  writeLastReadMap(map);
 }
 
 /** Get the saved display name */
@@ -228,4 +309,149 @@ export function reorderLocalGroups(ids: string[]): void {
   }
   saveLocalGroups(reordered);
   notifyGCsChanged();
+}
+
+/** Move a room to the very start of the top-level saved list. */
+export function moveRoomToStart(draggedId: number): void {
+  const list = getSavedGCs();
+  const fromIdx = list.findIndex((g) => g.id === draggedId);
+  if (fromIdx < 0) return;
+  const [moved] = list.splice(fromIdx, 1);
+  list.unshift(moved);
+  saveGCList(list);
+}
+
+/** Move a room to the very end of the top-level saved list. */
+export function moveRoomToEnd(draggedId: number): void {
+  const list = getSavedGCs();
+  const fromIdx = list.findIndex((g) => g.id === draggedId);
+  if (fromIdx < 0) return;
+  const [moved] = list.splice(fromIdx, 1);
+  list.push(moved);
+  saveGCList(list);
+}
+
+// ---------------------------------------------------------------------------
+// Per-room notification counts
+// ---------------------------------------------------------------------------
+
+function readNotifMap(): RoomNotifMap {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ROOM_NOTIF_COUNTS);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeNotifMap(map: RoomNotifMap): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.ROOM_NOTIF_COUNTS, JSON.stringify(map));
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+/** Get the notification counts for a room. */
+export function getRoomNotifCounts(gcId: number): RoomNotifCounts {
+  return readNotifMap()[gcId] ?? { general: 0, important: 0 };
+}
+
+/** Increment a room's notification counter and return the new counts. */
+export function incrementRoomNotif(gcId: number, important: boolean): RoomNotifCounts {
+  const map = readNotifMap();
+  const cur = map[gcId] ?? { general: 0, important: 0 };
+  const next: RoomNotifCounts = important
+    ? { ...cur, important: cur.important + 1 }
+    : { ...cur, general: cur.general + 1 };
+  map[gcId] = next;
+  writeNotifMap(map);
+  return next;
+}
+
+/** Reset notification counters for a room (when the user opens it). */
+export function resetRoomNotif(gcId: number): void {
+  const map = readNotifMap();
+  delete map[gcId];
+  writeNotifMap(map);
+}
+
+/** Get all notification counts as a flat map. */
+export function getAllNotifCounts(): RoomNotifMap {
+  return readNotifMap();
+}
+
+// ---------------------------------------------------------------------------
+// Notification settings
+// ---------------------------------------------------------------------------
+
+const NOTIF_SETTINGS_KEY = "tchat:notif-settings";
+
+/** Read persisted notification settings, falling back to defaults. */
+export function getNotifSettings(): NotifSettings {
+  try {
+    const raw = localStorage.getItem(NOTIF_SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_NOTIF_SETTINGS };
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_NOTIF_SETTINGS, ...parsed };
+  } catch {
+    return { ...DEFAULT_NOTIF_SETTINGS };
+  }
+}
+
+/** Persist notification settings. */
+export function saveNotifSettings(settings: NotifSettings): void {
+  try {
+    localStorage.setItem(NOTIF_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Muted rooms — per-room suppression of all notifications.
+// ---------------------------------------------------------------------------
+
+/** Read the set of muted room IDs from localStorage. */
+export function getMutedRooms(): Set<number> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.MUTED_ROOMS);
+    if (!raw) return new Set();
+    const arr: number[] = JSON.parse(raw);
+    return new Set(arr.filter((n) => typeof n === "number"));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Save muted room set to localStorage. */
+function saveMutedRooms(muted: Set<number>): void {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.MUTED_ROOMS,
+      JSON.stringify([...muted]),
+    );
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+/** Check if a room is muted. */
+export function isRoomMuted(gcId: number): boolean {
+  return getMutedRooms().has(gcId);
+}
+
+/**
+ * Toggle the muted state of a room. Returns the new `Set` so callers can
+ * use it directly for `setState`.
+ */
+export function toggleMuteRoom(gcId: number): Set<number> {
+  const muted = getMutedRooms();
+  if (muted.has(gcId)) {
+    muted.delete(gcId);
+  } else {
+    muted.add(gcId);
+  }
+  saveMutedRooms(muted);
+  return muted;
 }
