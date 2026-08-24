@@ -441,12 +441,14 @@ export default function MessageComposer({
         </div>
       )}
 
-      {/* Upload error — sits below the composer */}
-      <div className="flex items-center mt-1.5 min-h-5">
-        <span className="text-[var(--error)] text-xs ml-auto text-right">
-          {error}
-        </span>
-      </div>
+      {/* Upload error — only takes space when visible */}
+      {error && (
+        <div className="flex items-center mt-1.5">
+          <span className="text-[var(--error)] text-xs ml-auto text-right">
+            {error}
+          </span>
+        </div>
+      )}
 
       {/* GIF Picker */}
       <GifPicker
