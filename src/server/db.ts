@@ -541,55 +541,51 @@ async function ensureGroupChatsForumColumn(db: DB): Promise<void> {
 
 /** Forum posts — one row per thread. */
 async function ensureForumPostsTable(db: DB): Promise<void> {
-  try {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS forum_posts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_chat_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL DEFAULT '',
-        author_id INTEGER NOT NULL,
-        display_name TEXT NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    await db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_forum_posts_gc ON forum_posts(group_chat_id);'
+  // Helper: create the table + index in a single go.
+  const createBoth = () => db.exec(`
+    CREATE TABLE IF NOT EXISTS forum_posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_chat_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      author_id INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE INDEX IF NOT EXISTS idx_forum_posts_gc ON forum_posts(group_chat_id);
+  `);
+
+  // Try normal creation first.
+  try {
+    await createBoth();
+    // Verify the table is actually healthy — a prior deploy may have
+    // left sqlite_master entry intact with a bad rootpage.
+    await db.get('SELECT 1 AS ok FROM forum_posts LIMIT 1');
+    return; // all good
   } catch (err) {
     const msg = (err as Error).message;
-    console.error('forum_posts migration failed:', msg);
-    // Cloud Run instances racing on first deploy can leave the table
-    // entry in sqlite_master with a bad rootpage. Since the table has
-    // no production data yet, drop and recreate it cleanly.
     if (
-      msg.includes('SQLITE_CORRUPT') &&
-      (msg.includes('forum_posts') || msg.includes('malformed database schema'))
+      msg.includes('SQLITE_CORRUPT') ||
+      msg.includes('malformed database schema') ||
+      msg.includes('invalid rootpage')
     ) {
       console.log('forum_posts table is corrupt — dropping and recreating…');
-      try { await db.exec('DROP TABLE IF EXISTS forum_posts'); } catch (_) {}
-      try {
-        await db.exec(`
-          CREATE TABLE IF NOT EXISTS forum_posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_chat_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL DEFAULT '',
-            author_id INTEGER NOT NULL,
-            display_name TEXT NOT NULL,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-          );
-        `);
-        await db.exec(
-          'CREATE INDEX IF NOT EXISTS idx_forum_posts_gc ON forum_posts(group_chat_id);'
-        );
-        console.log('forum_posts table recreated successfully');
-      } catch (retryErr) {
-        console.error('forum_posts recreation failed:', (retryErr as Error).message);
-      }
+    } else {
+      console.error('forum_posts migration failed:', msg);
+      return; // non-corruption error (e.g. disk full) — don't touch the table
     }
+  }
+
+  // Drop the broken table and start fresh.
+  try { await db.exec('DROP TABLE IF EXISTS forum_posts'); } catch (_) {}
+  try {
+    await createBoth();
+    // Sanity-check the fresh table.
+    await db.get('SELECT 1 AS ok FROM forum_posts LIMIT 1');
+    console.log('forum_posts table recreated successfully');
+  } catch (retryErr) {
+    console.error('forum_posts recreation failed:', (retryErr as Error).message);
   }
 }
 
