@@ -20,6 +20,7 @@ interface Props {
   onRenameRoom: (name: string) => void;
   isOwner: boolean;
   roomTypeNames: string[];
+  onSendMessage: (text: string, gifUrl: string | null, file?: FileAttachment | null, replyToId?: number | null) => void;
 }
 
 /**
@@ -41,6 +42,7 @@ export default function ForumPostPage({
   onRenameRoom,
   isOwner,
   roomTypeNames,
+  onSendMessage,
 }: Props) {
   const [post, setPost] = useState<ForumPost | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,13 +82,6 @@ export default function ForumPostPage({
     lastReadId,
     markAllRead,
   } = useMessages(groupChatId, forumPostId);
-
-  const handleSendMessage = useCallback(
-    (text: string, gifUrl: string | null, file?: FileAttachment | null, replyToId?: number | null) => {
-      // Handled by the WebSocket send in ChatPage
-    },
-    []
-  );
 
   // Decide who can manage this post
   const canManage =
@@ -270,7 +265,7 @@ export default function ForumPostPage({
         hasMore={hasMore}
         loadingOlder={loadingOlder}
         error={msgError}
-        onSendMessage={handleSendMessage}
+        onSendMessage={onSendMessage}
         onDeleteRoom={() => {}}
         onLeaveRoom={() => {}}
         onViewProfile={onViewProfile}

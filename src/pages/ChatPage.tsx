@@ -661,6 +661,7 @@ export default function ChatPage() {
               onRenameRoom={handleRenameRoom}
               isOwner={isOwner}
               roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
+              onSendMessage={handleSendMessage}
             />
           ) : (
             <ForumPage
