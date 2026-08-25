@@ -3,8 +3,13 @@
  *
  * Each theme maps onto the CSS custom properties consumed throughout the app.
  * The active theme is applied by setting these variables on :root via a
- * <style> tag injected by the ThemeProvider. Everything is dark.
+ * <style> tag injected by the ThemeProvider.
+ *
+ * Themes come in two modes — dark and light. Dark is the default; the light
+ * set is reachable through the mode toggle in the theme picker.
  */
+
+export type ThemeMode = "dark" | "light";
 
 export interface ThemeColors {
   /** Deepest background — the body / app frame. */
@@ -32,6 +37,7 @@ export interface ThemeColors {
 export interface Theme {
   id: string;
   name: string;
+  mode: ThemeMode;
   /** Short description shown in the palette. */
   description: string;
   colors: ThemeColors;
@@ -41,6 +47,7 @@ export const THEMES: Theme[] = [
   {
     id: "dawn",
     name: "Dawn",
+    mode: "dark",
     description: "Warm black with subtle orange + sunrise accents",
     colors: {
       bgPrimary: "#0a0a0c",
@@ -58,6 +65,7 @@ export const THEMES: Theme[] = [
   {
     id: "matrix",
     name: "Matrix",
+    mode: "dark",
     description: "Aged CRT phosphor — soft sage on deep black-green",
     colors: {
       bgPrimary: "#080c08",
@@ -75,6 +83,7 @@ export const THEMES: Theme[] = [
   {
     id: "amber",
     name: "Amber",
+    mode: "dark",
     description: "Warm caramel & copper on deep brown-black",
     colors: {
       bgPrimary: "#0c0a06",
@@ -92,6 +101,7 @@ export const THEMES: Theme[] = [
   {
     id: "cyberpunk",
     name: "Cyberpunk",
+    mode: "dark",
     description: "Moody indigo & plum with cool teal accents",
     colors: {
       bgPrimary: "#0d0c1a",
@@ -109,6 +119,7 @@ export const THEMES: Theme[] = [
   {
     id: "muted",
     name: "Muted",
+    mode: "dark",
     description: "Soft gray-blue on charcoal",
     colors: {
       bgPrimary: "#14161a",
@@ -126,6 +137,7 @@ export const THEMES: Theme[] = [
   {
     id: "synthwave",
     name: "Synthwave",
+    mode: "dark",
     description: "Dusk violet & soft rose — mellow retro-future",
     colors: {
       bgPrimary: "#19102a",
@@ -143,6 +155,7 @@ export const THEMES: Theme[] = [
   {
     id: "carbon",
     name: "Carbon",
+    mode: "dark",
     description: "Minimal monochrome terminal",
     colors: {
       bgPrimary: "#0b0b0b",
@@ -160,6 +173,7 @@ export const THEMES: Theme[] = [
   {
     id: "forest",
     name: "Forest",
+    mode: "dark",
     description: "Deep moss & olive with warm wood tones",
     colors: {
       bgPrimary: "#0c0f0a",
@@ -177,6 +191,7 @@ export const THEMES: Theme[] = [
   {
     id: "ocean",
     name: "Ocean",
+    mode: "dark",
     description: "Deep navy ink with pale aqua and slate blue",
     colors: {
       bgPrimary: "#0a0e16",
@@ -194,6 +209,7 @@ export const THEMES: Theme[] = [
   {
     id: "rose",
     name: "Rose Quartz",
+    mode: "dark",
     description: "Blush pink & dusty mauve — soft as rose-tinted glass",
     colors: {
       bgPrimary: "#120c10",
@@ -211,6 +227,7 @@ export const THEMES: Theme[] = [
   {
     id: "void",
     name: "Void",
+    mode: "dark",
     description: "Near-absolute black with piercing white-blue, cold and stark",
     colors: {
       bgPrimary: "#060608",
@@ -228,6 +245,7 @@ export const THEMES: Theme[] = [
   {
     id: "matcha",
     name: "Matcha",
+    mode: "dark",
     description: "Creamy green tea — sage, oat, and soft olive",
     colors: {
       bgPrimary: "#0c0e0a",
@@ -245,6 +263,7 @@ export const THEMES: Theme[] = [
   {
     id: "noir",
     name: "Noir",
+    mode: "dark",
     description: "Deep cinema black with aged gold — a vintage projector glow",
     colors: {
       bgPrimary: "#080606",
@@ -262,6 +281,7 @@ export const THEMES: Theme[] = [
   {
     id: "arctic",
     name: "Arctic",
+    mode: "dark",
     description: "Glacial ice & slate — crisp blue-white on frozen stone",
     colors: {
       bgPrimary: "#0a0e14",
@@ -276,25 +296,324 @@ export const THEMES: Theme[] = [
       error: "#c87078",
     },
   },
+  {
+    id: "sunrise",
+    name: "Sunrise",
+    mode: "light",
+    description: "Warm cream paper with a coral sunrise glow",
+    colors: {
+      bgPrimary: "#faf5ec",
+      bgSecondary: "#f3ecdd",
+      bgTertiary: "#ebe2cd",
+      borderPrimary: "#d9ccae",
+      textPrimary: "#33291e",
+      textSecondary: "#7d6f58",
+      textMuted: "#b8ab8d",
+      accent: "#e2713b",
+      accentLight: "#f59a6b",
+      error: "#c94f3d",
+    },
+  },
+  {
+    id: "linen",
+    name: "Linen",
+    mode: "light",
+    description: "Bleached-linen calm — ink-black type, terracotta accents",
+    colors: {
+      bgPrimary: "#f4f1ec",
+      bgSecondary: "#ebe7df",
+      bgTertiary: "#e1dcd2",
+      borderPrimary: "#cfc8ba",
+      textPrimary: "#2c2a26",
+      textSecondary: "#6f6a60",
+      textMuted: "#aaa49a",
+      accent: "#c05a33",
+      accentLight: "#d98055",
+      error: "#b03a2e",
+    },
+  },
+  {
+    id: "mint",
+    name: "Mint",
+    mode: "light",
+    description: "Fresh spearmint — cool greens on bright clean white",
+    colors: {
+      bgPrimary: "#f2faf4",
+      bgSecondary: "#e6f3ea",
+      bgTertiary: "#d9ebdf",
+      borderPrimary: "#bfd8c8",
+      textPrimary: "#1e3b2a",
+      textSecondary: "#4f7a5f",
+      textMuted: "#8fb39b",
+      accent: "#2e9e5f",
+      accentLight: "#5cbf85",
+      error: "#c4503a",
+    },
+  },
+  {
+    id: "sky",
+    name: "Sky",
+    mode: "light",
+    description: "Clear daytime blue — cerulean over soft white clouds",
+    colors: {
+      bgPrimary: "#f0f7fb",
+      bgSecondary: "#e4eff6",
+      bgTertiary: "#d7e7f0",
+      borderPrimary: "#bcd2e0",
+      textPrimary: "#1e2f3d",
+      textSecondary: "#4f6c7e",
+      textMuted: "#8fa8b8",
+      accent: "#2f8fc1",
+      accentLight: "#5fadd4",
+      error: "#c94f4f",
+    },
+  },
+  {
+    id: "lavender",
+    name: "Lavender",
+    mode: "light",
+    description: "Dried lavender — lilac fields with violet ink",
+    colors: {
+      bgPrimary: "#f8f5fc",
+      bgSecondary: "#efeaf7",
+      bgTertiary: "#e5def0",
+      borderPrimary: "#d0c4e2",
+      textPrimary: "#322a44",
+      textSecondary: "#6d5f86",
+      textMuted: "#a79ac0",
+      accent: "#7b5bb8",
+      accentLight: "#9d80d0",
+      error: "#c94f6e",
+    },
+  },
+  {
+    id: "peach",
+    name: "Peach",
+    mode: "light",
+    description: "Stone fruit — creamy peach with a coral-pink pit",
+    colors: {
+      bgPrimary: "#fdf6f0",
+      bgSecondary: "#f6ece2",
+      bgTertiary: "#efe1d4",
+      borderPrimary: "#e0cbb6",
+      textPrimary: "#402c24",
+      textSecondary: "#82695c",
+      textMuted: "#bda393",
+      accent: "#e06e4f",
+      accentLight: "#ee9578",
+      error: "#c9433a",
+    },
+  },
+  {
+    id: "slate",
+    name: "Slate",
+    mode: "light",
+    description: "Rain-washed slate — graphite text with cobalt sparks",
+    colors: {
+      bgPrimary: "#f2f4f7",
+      bgSecondary: "#e7eaef",
+      bgTertiary: "#dbdfe7",
+      borderPrimary: "#c3c9d4",
+      textPrimary: "#23272e",
+      textSecondary: "#5c646f",
+      textMuted: "#9aa2ae",
+      accent: "#3d5fc0",
+      accentLight: "#6a86d6",
+      error: "#c0483c",
+    },
+  },
+  {
+    id: "ivory",
+    name: "Ivory",
+    mode: "light",
+    description: "Gallery white with warm ivory panels and wine accents",
+    colors: {
+      bgPrimary: "#ffffff",
+      bgSecondary: "#f7f4ee",
+      bgTertiary: "#efeadf",
+      borderPrimary: "#d8d0bf",
+      textPrimary: "#26221c",
+      textSecondary: "#6a6358",
+      textMuted: "#a89f90",
+      accent: "#8e3b4f",
+      accentLight: "#b25e72",
+      error: "#b03a2e",
+    },
+  },
+  {
+    id: "sage",
+    name: "Sage",
+    mode: "light",
+    description: "Garden sage — dusty green-grey with fresh olive zing",
+    colors: {
+      bgPrimary: "#f4f6f0",
+      bgSecondary: "#e9ede2",
+      bgTertiary: "#dee3d4",
+      borderPrimary: "#c6cdb6",
+      textPrimary: "#2c3324",
+      textSecondary: "#646e52",
+      textMuted: "#9ba48a",
+      accent: "#6a8f3f",
+      accentLight: "#8fb062",
+      error: "#b5523a",
+    },
+  },
+  {
+    id: "blush",
+    name: "Blush",
+    mode: "light",
+    description: "First-date blush — rose-tinted paper with raspberry ink",
+    colors: {
+      bgPrimary: "#fdf4f6",
+      bgSecondary: "#f7e8ec",
+      bgTertiary: "#f0dbe2",
+      borderPrimary: "#e0c3cd",
+      textPrimary: "#40242e",
+      textSecondary: "#7c5563",
+      textMuted: "#b5909e",
+      accent: "#d94f7a",
+      accentLight: "#e87a9e",
+      error: "#c0353f",
+    },
+  },
+  {
+    id: "sand",
+    name: "Sand",
+    mode: "light",
+    description: "Desert noon — warm dunes with a flash of gold",
+    colors: {
+      bgPrimary: "#faf4e8",
+      bgSecondary: "#f2e9d6",
+      bgTertiary: "#e9dec4",
+      borderPrimary: "#d6c6a4",
+      textPrimary: "#3d3222",
+      textSecondary: "#7a6a4c",
+      textMuted: "#b2a27e",
+      accent: "#c98f2a",
+      accentLight: "#dcae4f",
+      error: "#b5502e",
+    },
+  },
+  {
+    id: "frost",
+    name: "Frost",
+    mode: "light",
+    description: "Morning frost — icy blue-white with glacier teal",
+    colors: {
+      bgPrimary: "#f3f8fb",
+      bgSecondary: "#e6eef5",
+      bgTertiary: "#d9e5ef",
+      borderPrimary: "#bccfdd",
+      textPrimary: "#1f2e3b",
+      textSecondary: "#50677a",
+      textMuted: "#92a8ba",
+      accent: "#1f8f9e",
+      accentLight: "#4fb2bf",
+      error: "#c04a52",
+    },
+  },
+  {
+    id: "cocoa",
+    name: "Cocoa",
+    mode: "light",
+    description: "Milky cocoa — warm browns with a caramel melt",
+    colors: {
+      bgPrimary: "#f7f1ea",
+      bgSecondary: "#efe5da",
+      bgTertiary: "#e6d8c9",
+      borderPrimary: "#d2bfa9",
+      textPrimary: "#35271c",
+      textSecondary: "#6f5a47",
+      textMuted: "#a8917b",
+      accent: "#a9653a",
+      accentLight: "#c0844f",
+      error: "#b3402e",
+    },
+  },
+  {
+    id: "butter",
+    name: "Butter",
+    mode: "light",
+    description: "Sunny butter — bright cream with honey-gold sparkle",
+    colors: {
+      bgPrimary: "#fdf8e8",
+      bgSecondary: "#f6eecf",
+      bgTertiary: "#efe4b6",
+      borderPrimary: "#dccc8f",
+      textPrimary: "#3a3018",
+      textSecondary: "#75683c",
+      textMuted: "#aea06e",
+      accent: "#d9a519",
+      accentLight: "#e6bd45",
+      error: "#b3452e",
+    },
+  },
 ];
 
 export const DEFAULT_THEME_ID = "dawn";
 
-const STORAGE_KEY = "chat-theme-id";
+/** Default light theme, applied the first time the user switches to light. */
+export const DEFAULT_LIGHT_THEME_ID = "sunrise";
 
-export function getStoredThemeId(): string {
+/** Which mode the user last had active. */
+const MODE_STORAGE_KEY = "chat-theme-mode";
+/** Per-mode selection keys. */
+const DARK_THEME_STORAGE_KEY = "chat-theme-dark-id";
+const LIGHT_THEME_STORAGE_KEY = "chat-theme-light-id";
+/** Legacy key from before the dark/light split — always held a dark theme. */
+const LEGACY_THEME_STORAGE_KEY = "chat-theme-id";
+
+function defaultForMode(mode: ThemeMode): string {
+  return mode === "dark" ? DEFAULT_THEME_ID : DEFAULT_LIGHT_THEME_ID;
+}
+
+function themeKeyForMode(mode: ThemeMode): string {
+  return mode === "dark" ? DARK_THEME_STORAGE_KEY : LIGHT_THEME_STORAGE_KEY;
+}
+
+/** Which mode is active, honoring the stored preference (dark by default). */
+export function getStoredMode(): ThemeMode {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && THEMES.some((t) => t.id === stored)) return stored;
+    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    if (stored === "dark" || stored === "light") return stored;
+    // Pre-split installs only ever wrote chat-theme-id, which was dark.
+    if (localStorage.getItem(LEGACY_THEME_STORAGE_KEY)) return "dark";
   } catch {
     // localStorage unavailable
   }
-  return DEFAULT_THEME_ID;
+  return "dark";
+}
+
+/** Stored theme for a given mode, falling back to that mode's default. */
+export function getStoredThemeIdForMode(mode: ThemeMode): string {
+  try {
+    const stored = localStorage.getItem(themeKeyForMode(mode));
+    if (stored && THEMES.some((t) => t.id === stored && t.mode === mode)) {
+      return stored;
+    }
+    if (mode === "dark") {
+      // Migrate a pre-split selection (chat-theme-id was always a dark theme).
+      const legacy = localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+      if (legacy && THEMES.some((t) => t.id === legacy && t.mode === "dark")) {
+        return legacy;
+      }
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return defaultForMode(mode);
+}
+
+/** The active theme id, honoring the stored mode. */
+export function getStoredThemeId(): string {
+  return getStoredThemeIdForMode(getStoredMode());
 }
 
 export function storeThemeId(id: string): void {
+  const theme = getTheme(id);
   try {
-    localStorage.setItem(STORAGE_KEY, id);
+    localStorage.setItem(themeKeyForMode(theme.mode), id);
+    localStorage.setItem(MODE_STORAGE_KEY, theme.mode);
   } catch {
     // localStorage unavailable
   }

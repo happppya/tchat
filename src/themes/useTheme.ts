@@ -1,6 +1,12 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { THEMES, getStoredThemeId, storeThemeId, getTheme } from "./themes";
-import type { Theme, ThemeColors } from "./themes";
+import {
+  THEMES,
+  getStoredThemeId,
+  getStoredThemeIdForMode,
+  storeThemeId,
+  getTheme,
+} from "./themes";
+import type { Theme, ThemeColors, ThemeMode } from "./themes";
 
 /**
  * CSS custom property names (in declaration order) paired with the theme's
@@ -71,7 +77,15 @@ export function useTheme() {
     setThemeId(id);
   }, []);
 
-  return { themeId, theme, setTheme, themes: THEMES };
+  /**
+   * Switch modes (dark/light). The theme resolves to whatever was last
+   * selected in that mode, or that mode's default theme on first switch.
+   */
+  const setMode = useCallback((mode: ThemeMode) => {
+    setThemeId(getStoredThemeIdForMode(mode));
+  }, []);
+
+  return { themeId, theme, setTheme, setMode, mode: theme.mode, themes: THEMES };
 }
 
 /**

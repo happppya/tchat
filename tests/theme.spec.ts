@@ -7,7 +7,9 @@ import { uniqueGcId, resetApp, signUpAdmin } from "./helpers";
  * Verifies that selecting a theme changes the CSS variables applied to the
  * document root (guards against the regression where themes were applied via
  * an injected <style> tag whose :root rule lost to Tailwind layering; they're
- * now applied as inline styles on <html>).
+ * now applied as inline styles on <html>). Also covers the dark/light mode
+ * toggle: light has as many themes as dark, switching to light applies the
+ * default light theme, and the two modes remember their own selections.
  */
 
 const UNIQUE_GC = uniqueGcId;
@@ -99,4 +101,53 @@ test("theme persists across a page reload", async ({ page }) => {
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
   );
   expect(afterReload.toLowerCase()).toBe("#c4956a");
+});
+
+test("dark/light toggle: equal counts, light defaults to Sunrise, modes remember their picks", async ({
+  page,
+}) => {
+  const getAccent = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
+    );
+
+  await signUpAdmin(page);
+  await page.evaluate(() => localStorage.removeItem("chat-theme-id"));
+  await page.reload();
+  await openPalette(page);
+  await page.fill('[data-testid="palette-search"]', "choose theme");
+  await page.keyboard.press("Enter");
+
+  // Pick a dark theme first so we can prove each mode remembers its own pick.
+  await page.click('[data-testid="theme-option-cyberpunk"]');
+  const darkCount = await page.locator('[data-testid^="theme-option-"]').count();
+  expect(darkCount).toBeGreaterThan(0);
+
+  // Switching to light applies the default light theme (Sunrise) and shows
+  // the same number of options as dark.
+  await page.click('[data-testid="theme-mode-light"]');
+  const lightCount = await page.locator('[data-testid^="theme-option-"]').count();
+  expect(lightCount).toBe(darkCount);
+  expect((await getAccent()).toLowerCase()).toBe("#e2713b"); // Sunrise
+
+  // Pick a light theme explicitly, then flip back and forth: each mode
+  // restores the theme last chosen in it (Cyberpunk dark, Sky light).
+  await page.click('[data-testid="theme-option-sky"]');
+  await page.click('[data-testid="theme-mode-dark"]');
+  expect((await getAccent()).toLowerCase()).toBe("#6ec6ca"); // Cyberpunk
+  await page.click('[data-testid="theme-mode-light"]');
+  expect((await getAccent()).toLowerCase()).toBe("#2f8fc1"); // Sky
+
+  // The light selection survives a reload.
+  await page.click('text=close');
+  await page.reload();
+  expect((await getAccent()).toLowerCase()).toBe("#2f8fc1");
+
+  // And the dark selection is still remembered after reload too.
+  await openPalette(page);
+  await page.fill('[data-testid="palette-search"]', "choose theme");
+  await page.keyboard.press("Enter");
+  await page.click('[data-testid="theme-mode-dark"]');
+  await page.click('text=close');
+  expect((await getAccent()).toLowerCase()).toBe("#6ec6ca"); // Cyberpunk
 });

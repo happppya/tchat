@@ -89,6 +89,28 @@ function parseMessageId(value: unknown): number | null {
 }
 
 /**
+ * Emoji reactions are stored and rendered for every member of a room, so the
+ * server must reject arbitrary text (including markup) rather than trusting
+ * the client. Accept only a short string made up of emoji-eligible code points
+ * — pictographs, the emoji variation selector (U+FE0F), skin-tone modifiers
+ * (U+1F3FB–U+1F3FF), and ZWJ joins — that contains at least one real
+ * pictograph. This keeps the client palette ("👍", "❤️", …) and normal
+ * variants valid while rejecting "hello", "<script>…", control characters,
+ * and other padding.
+ */
+const EMOJI_CHARS_RE =
+  /^(?:\p{Extended_Pictographic}|[\u200D\uFE0F\u{1F3FB}-\u{1F3FF}])+$/u;
+const HAS_PICTOGRAPH_RE = /\p{Extended_Pictographic}/u;
+const MAX_EMOJI_CODEPOINTS = 32;
+
+function isValidReactionEmoji(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const emoji = value.trim();
+  if (!emoji || [...emoji].length > MAX_EMOJI_CODEPOINTS) return false;
+  return HAS_PICTOGRAPH_RE.test(emoji) && EMOJI_CHARS_RE.test(emoji);
+}
+
+/**
  * Build the API router. Mounted at `/api` by server.ts, so route paths here
  * are relative (e.g. `router.get('/health')` serves `/api/health`).
  */
@@ -1007,7 +1029,7 @@ export function createRouter({
     if (!id) {
       return res.status(400).json({ error: 'Invalid message id' });
     }
-    if (!cleanEmoji || cleanEmoji.length > 32) {
+    if (!isValidReactionEmoji(cleanEmoji)) {
       return res.status(400).json({ error: 'Invalid emoji' });
     }
 

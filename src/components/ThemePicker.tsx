@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "../themes/useTheme";
 import { THEMES } from "../themes/themes";
+import type { ThemeMode } from "../themes/themes";
 
 interface Props {
   isOpen: boolean;
@@ -18,8 +19,14 @@ function Swatch({ color }: { color: string }) {
 }
 
 export default function ThemePicker({ isOpen, onClose }: Props) {
-  const { themeId, setTheme } = useTheme();
-  const [_localId, setLocalId] = useState(themeId);
+  const { themeId, setTheme, mode, setMode } = useTheme();
+  const [localId, setLocalId] = useState(themeId);
+
+  // Keep the locally-tracked selection in sync when the mode (and therefore
+  // the active theme) changes.
+  useEffect(() => {
+    setLocalId(themeId);
+  }, [themeId]);
 
   if (!isOpen) return null;
 
@@ -27,6 +34,14 @@ export default function ThemePicker({ isOpen, onClose }: Props) {
     setLocalId(id);
     setTheme(id);
   };
+
+  const handleMode = (next: ThemeMode) => {
+    // setMode resolves the theme for the new mode synchronously via the
+    // store; the useEffect above keeps localId in step with it.
+    setMode(next);
+  };
+
+  const visibleThemes = THEMES.filter((t) => t.mode === mode);
 
   return (
     <div
@@ -56,9 +71,45 @@ export default function ThemePicker({ isOpen, onClose }: Props) {
           </button>
         </div>
 
+        {/* Mode toggle — switches between the dark and light theme sets */}
+        <div className="p-3 pb-0 flex items-center gap-2">
+          <span className="text-xs text-[var(--text-muted)] uppercase tracking-widest">
+            mode
+          </span>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => handleMode("dark")}
+              data-testid="theme-mode-dark"
+              aria-pressed={mode === "dark"}
+              className={`px-3 py-1 text-xs border cursor-pointer transition-colors ${
+                mode === "dark"
+                  ? "bg-[var(--bg-tertiary)] border-[var(--accent)] text-[var(--accent)]"
+                  : "bg-[var(--bg-primary)] border-[var(--border-primary)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              ● dark
+            </button>
+            <button
+              onClick={() => handleMode("light")}
+              data-testid="theme-mode-light"
+              aria-pressed={mode === "light"}
+              className={`px-3 py-1 text-xs border cursor-pointer transition-colors ${
+                mode === "light"
+                  ? "bg-[var(--bg-tertiary)] border-[var(--accent)] text-[var(--accent)]"
+                  : "bg-[var(--bg-primary)] border-[var(--border-primary)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              ○ light
+            </button>
+          </div>
+          <span className="ml-auto text-xs text-[var(--text-muted)]">
+            {visibleThemes.length} themes
+          </span>
+        </div>
+
         <div className="p-3 flex flex-col gap-2">
-          {THEMES.map((t) => {
-            const active = t.id === _localId;
+          {visibleThemes.map((t) => {
+            const active = t.id === localId;
             return (
               <button
                 key={t.id}

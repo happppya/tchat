@@ -141,6 +141,46 @@ describe("room membership enforcement", () => {
     );
     expect(row).toBeUndefined();
   });
+
+  it("rejects arbitrary text as a reaction", async () => {
+    const res = await request("POST", "/reactToMessage", {
+      messageId: 9001,
+      emoji: "<script>alert(1)</script>",
+    });
+    expect(res.status).toBe(400);
+    const row = await db.get(
+      "SELECT 1 AS present FROM message_reactions WHERE message_id = 9001 AND emoji = '<script>alert(1)</script>'"
+    );
+    expect(row).toBeUndefined();
+  });
+
+  it("rejects plain words and control characters as reactions", async () => {
+    for (const emoji of ["hello", "👍\n👍", "  ", "a"]) {
+      const res = await request("POST", "/reactToMessage", {
+        messageId: 9001,
+        emoji,
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("rejects non-string emoji payloads", async () => {
+    const res = await request("POST", "/reactToMessage", {
+      messageId: 9001,
+      emoji: { type: "not-an-emoji" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts genuine emoji, including skin tones and variation selectors", async () => {
+    for (const emoji of ["🎉", "👍🏽", "❤️", "👨‍👩‍👧"]) {
+      const res = await request("POST", "/reactToMessage", {
+        messageId: 9001,
+        emoji,
+      });
+      expect(res.status).toBe(200);
+    }
+  });
 });
 
 describe("upload MIME allowlist", () => {
