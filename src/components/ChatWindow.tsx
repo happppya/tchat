@@ -52,6 +52,8 @@ interface Props {
   onUnpinMessage: (messageId: number) => void;
   /** Called when the user clicks a pinned message to scroll to it. */
   onJumpToMessage: (messageId: number) => void;
+  /** Hide the [ leave room ] / [ delete room ] buttons. */
+  hideRoomActions?: boolean;
 }
 
 export default function ChatWindow({
@@ -84,6 +86,7 @@ export default function ChatWindow({
   onPinMessage,
   onUnpinMessage,
   onJumpToMessage,
+  hideRoomActions = false,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -285,23 +288,27 @@ export default function ChatWindow({
         </span>
         <span className="ml-auto flex items-center gap-2">
           <PinnedMessages messages={messages} onJumpToMessage={onJumpToMessage} />
-          <button
-            onClick={onLeaveRoom}
-            data-testid="leave-room-button"
-            title="Leave this room"
-            className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
-          >
-            [ leave room ]
-          </button>
-          {isOwner && (
-            <button
-              onClick={onDeleteRoom}
-              data-testid="delete-room-button"
-              title="Delete this room"
-              className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
-            >
-              [ delete room ]
-            </button>
+          {!hideRoomActions && (
+            <>
+              <button
+                onClick={onLeaveRoom}
+                data-testid="leave-room-button"
+                title="Leave this room"
+                className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
+              >
+                [ leave room ]
+              </button>
+              {isOwner && (
+                <button
+                  onClick={onDeleteRoom}
+                  data-testid="delete-room-button"
+                  title="Delete this room"
+                  className="text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors cursor-pointer"
+                >
+                  [ delete room ]
+                </button>
+              )}
+            </>
           )}
           <span className="cursor-block !h-3 !w-2" />
         </span>

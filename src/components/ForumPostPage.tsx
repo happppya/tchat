@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ForumPost, FileAttachment } from "../types";
 import { getForumPost, editForumPost as editForumPostApi, deleteForumPost as deleteForumPostApi } from "../services/api";
 import { useMessages } from "../hooks/useMessages";
+import type { WSMessage } from "../types";
 import ChatWindow from "./ChatWindow";
 import Markdown from "./Markdown";
 
@@ -21,6 +22,8 @@ interface Props {
   isOwner: boolean;
   roomTypeNames: string[];
   onSendMessage: (text: string, gifUrl: string | null, file?: FileAttachment | null, replyToId?: number | null) => void;
+  /** Called to register this thread's WS handler with the parent ChatPage. */
+  registerWSHandler: (handler: (msg: WSMessage) => void) => void;
 }
 
 /**
@@ -43,6 +46,7 @@ export default function ForumPostPage({
   isOwner,
   roomTypeNames,
   onSendMessage,
+  registerWSHandler,
 }: Props) {
   const [post, setPost] = useState<ForumPost | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,6 +86,13 @@ export default function ForumPostPage({
     lastReadId,
     markAllRead,
   } = useMessages(groupChatId, forumPostId);
+
+  // Register this thread's WS handler with the parent so live messages
+  // flow through ChatPage's single WebSocket listener.
+  useEffect(() => {
+    registerWSHandler(handleWSMessage);
+    return () => registerWSHandler(() => {});
+  }, [registerWSHandler, handleWSMessage]);
 
   // Decide who can manage this post
   const canManage =
@@ -268,6 +279,7 @@ export default function ForumPostPage({
         onSendMessage={onSendMessage}
         onDeleteRoom={() => {}}
         onLeaveRoom={() => {}}
+        hideRoomActions
         onViewProfile={onViewProfile}
         onLoadOlder={loadOlder}
         onSlashCommand={() => {}}

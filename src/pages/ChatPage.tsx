@@ -137,11 +137,13 @@ export default function ChatPage() {
     markAllRead,
   } = useMessages(activeGCId, null);
 
-  // Separate message state for the active forum post thread (if any).
-  const forumMessages = useMessages(
-    activeForumPostId !== null ? activeGCId : null,
-    activeForumPostId
-  );
+  // Ref callback: ForumPostPage registers its own WS message handler here
+  // so that ChatPage's single WS listener can forward messages to the
+  // currently-open forum thread.
+  const forumWSHandlerRef = useRef<(msg: WSMessage) => void>(() => {});
+  const setForumWSHandler = useCallback((handler: (msg: WSMessage) => void) => {
+    forumWSHandlerRef.current = handler;
+  }, []);
 
   // Compute which messages @ping the current user in the active room.
   const highlightedMessageIds = useMemo(() => {
@@ -204,9 +206,9 @@ export default function ChatPage() {
       handleWSNotifications(msg, isPingForMe);
 
       handleWSMessage(msg);
-      forumMessages.handleWSMessage(msg);
+      forumWSHandlerRef.current(msg);
     },
-    [handleWSMessage, forumMessages.handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
+    [handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
   );
 
   const { send } = useWebSocket(handleWSIncoming);
@@ -662,6 +664,7 @@ export default function ChatPage() {
               isOwner={isOwner}
               roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
               onSendMessage={handleSendMessage}
+              registerWSHandler={setForumWSHandler}
             />
           ) : (
             <ForumPage
