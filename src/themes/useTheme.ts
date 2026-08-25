@@ -26,6 +26,39 @@ const CSS_VARS: { cssVar: string; key: keyof ThemeColors }[] = [
 ];
 
 /**
+ * CRT scanline overlay opacity. Dark backgrounds swallow the black scanlines,
+ * but on light themes they read as obvious stripes — so light mode gets a much
+ * subtler version.
+ */
+const SCANLINE_OPACITY: Record<ThemeMode, string> = {
+  dark: "0.4",
+  light: "0.1",
+};
+
+/**
+ * Opacity of the dark depth blur (second shadow) on .glow elements. Dark
+ * themes keep it for contrast against dark backgrounds; in light mode it
+ * reads as a dirty dark ring around the pastel halo, so it's removed
+ * entirely.
+ */
+const GLOW_SHADOW_OPACITY: Record<ThemeMode, string> = {
+  dark: "0.3",
+  light: "0",
+};
+
+/** How much white to blend into the accent for the light-mode glow halo. */
+const LIGHT_GLOW_WHITE_RATIO = 0.55;
+
+/** Mix a #rrggbb color toward white by `ratio` (0..1). */
+function mixWithWhite(hex: string, ratio: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const mix = (c: number) => Math.round(c + (255 - c) * ratio);
+  return `rgb(${mix(r)} ${mix(g)} ${mix(b)})`;
+}
+
+/**
  * Apply a theme by setting CSS custom properties directly on the root element.
  *
  * Setting inline style on document.documentElement is bulletproof: inline
@@ -37,6 +70,17 @@ function applyTheme(theme: Theme): void {
   for (const { cssVar, key } of CSS_VARS) {
     root.style.setProperty(cssVar, theme.colors[key]);
   }
+  root.style.setProperty("--scanline-opacity", SCANLINE_OPACITY[theme.mode]);
+  root.style.setProperty(
+    "--glow-color",
+    theme.mode === "light"
+      ? mixWithWhite(theme.colors.accent, LIGHT_GLOW_WHITE_RATIO)
+      : "currentColor"
+  );
+  root.style.setProperty(
+    "--glow-shadow-opacity",
+    GLOW_SHADOW_OPACITY[theme.mode]
+  );
 }
 
 /**

@@ -18,6 +18,9 @@
   --accent: #d98a4e;
   --accent-light: #e8a96b;
   --error: #c75450;
+  --scanline-opacity: 0.4;
+  --glow-color: currentColor;
+  --glow-shadow-opacity: 0.3;
 }
 
 html,
@@ -49,7 +52,7 @@ body,
     rgba(0, 0, 0, 0.08) 3px,
     rgba(0, 0, 0, 0.08) 4px
   );
-  opacity: 0.4;
+  opacity: var(--scanline-opacity, 0.4);
   mix-blend-mode: multiply;
 }
 
@@ -306,9 +309,12 @@ textarea {
   margin-left: 2px;
 }
 
-/* Soft glow for the accent text */
+/* Soft glow for the accent text. Dark themes glow with the raw accent; light
+   themes swap in a pastel halo (--glow-color) so the saturated accent doesn't
+   bloom into a harsh neon glow on bright backgrounds. */
 .glow {
-  text-shadow: 0 0 5px currentColor, 0 0 10px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 0 5px var(--glow-color, currentColor),
+    0 0 10px rgb(0 0 0 / var(--glow-shadow-opacity, 0.3));
 }
 
 /* Panel border with a subtle accent on top (like a terminal title bar) */
