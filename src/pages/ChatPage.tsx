@@ -702,7 +702,6 @@ export default function ChatPage() {
             onPinMessage={handlePinMessage}
             onUnpinMessage={handleUnpinMessage}
             onJumpToMessage={handleJumpToMessage}
-            groupChatId={activeGCId!}
           />
         )
       ) : null}

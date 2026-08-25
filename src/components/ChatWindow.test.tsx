@@ -67,7 +67,6 @@ function renderWindow(overrides: Partial<React.ComponentProps<typeof ChatWindow>
       onPinMessage={noop}
       onUnpinMessage={noop}
       onJumpToMessage={noop}
-      groupChatId={1}
       {...overrides}
     />
   );

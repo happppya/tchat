@@ -290,7 +290,6 @@ export default function ForumPostPage({
         onPinMessage={pinMessage}
         onUnpinMessage={unpinMessage}
         onJumpToMessage={() => {}}
-        groupChatId={groupChatId}
       />
     </div>
   );

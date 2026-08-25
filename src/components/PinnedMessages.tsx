@@ -1,47 +1,35 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import type { Message } from "../types";
-import { fetchPinnedMessages } from "../services/api";
 import { messagePreview } from "../utils/format";
 
 interface Props {
-  groupChatId: number;
+  /** The full messages array from the parent chat — pinned messages are filtered locally. */
+  messages: Message[];
   /** Called when the user clicks a pinned message to scroll to it. */
   onJumpToMessage: (messageId: number) => void;
 }
 
 /**
  * A pin icon button in the chat window header. On click, opens a popover
- * listing every pinned message in the current room. Each row shows a
+ * listing every pinned message currently loaded. Each row shows a
  * truncated preview; clicking a row scrolls the message list to that
  * message.
  */
-export default function PinnedMessages({ groupChatId, onJumpToMessage }: Props) {
+export default function PinnedMessages({ messages, onJumpToMessage }: Props) {
   const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await fetchPinnedMessages(groupChatId);
-      setPinned(list);
-    } catch {
-      setPinned([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [groupChatId]);
+  // Derive pinned messages from the local array — no extra network call.
+  const pinned = useMemo(
+    () => messages.filter((m) => m.pinned === 1),
+    [messages]
+  );
 
-  useEffect(() => {
-    if (open) load();
-  }, [open, load]);
+  const count = pinned.length;
 
   const handleJump = (msg: Message) => {
     setOpen(false);
     onJumpToMessage(msg.id);
   };
-
-  const count = pinned.length;
 
   return (
     <div className="relative">
@@ -78,32 +66,28 @@ export default function PinnedMessages({ groupChatId, onJumpToMessage }: Props) 
                 ✕
               </button>
             </div>
-            {loading && (
-              <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                loading…
-              </div>
-            )}
-            {!loading && pinned.length === 0 && (
+            {pinned.length === 0 ? (
               <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
                 No pinned messages in this room.
               </div>
+            ) : (
+              pinned.map((msg) => (
+                <button
+                  key={msg.id}
+                  onClick={() => handleJump(msg)}
+                  data-testid="pinned-message-row"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer border-none bg-transparent border-b border-[var(--border-primary)]/50 last:border-b-0"
+                >
+                  <span className="text-[var(--accent-light)] font-semibold">
+                    {msg.display_name || "unknown"}
+                  </span>
+                  <span className="text-[var(--text-muted)] ml-1">
+                    — {messagePreview(msg).slice(0, 60)}
+                    {messagePreview(msg).length > 60 ? "…" : ""}
+                  </span>
+                </button>
+              ))
             )}
-            {pinned.map((msg) => (
-              <button
-                key={msg.id}
-                onClick={() => handleJump(msg)}
-                data-testid="pinned-message-row"
-                className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer border-none bg-transparent border-b border-[var(--border-primary)]/50 last:border-b-0"
-              >
-                <span className="text-[var(--accent-light)] font-semibold">
-                  {msg.display_name || "unknown"}
-                </span>
-                <span className="text-[var(--text-muted)] ml-1">
-                  — {messagePreview(msg).slice(0, 60)}
-                  {messagePreview(msg).length > 60 ? "…" : ""}
-                </span>
-              </button>
-            ))}
           </div>
         </>
       )}

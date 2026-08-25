@@ -52,8 +52,6 @@ interface Props {
   onUnpinMessage: (messageId: number) => void;
   /** Called when the user clicks a pinned message to scroll to it. */
   onJumpToMessage: (messageId: number) => void;
-  /** The group chat id, needed by the pinned messages popover. */
-  groupChatId: number;
 }
 
 export default function ChatWindow({
@@ -86,7 +84,6 @@ export default function ChatWindow({
   onPinMessage,
   onUnpinMessage,
   onJumpToMessage,
-  groupChatId,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -287,7 +284,7 @@ export default function ChatWindow({
           — {messages.length} msg{messages.length === 1 ? "" : "s"}
         </span>
         <span className="ml-auto flex items-center gap-2">
-          <PinnedMessages groupChatId={groupChatId} onJumpToMessage={onJumpToMessage} />
+          <PinnedMessages messages={messages} onJumpToMessage={onJumpToMessage} />
           <button
             onClick={onLeaveRoom}
             data-testid="leave-room-button"
