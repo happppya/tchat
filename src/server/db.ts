@@ -145,12 +145,20 @@ export async function runMigrations(db: DB): Promise<void> {
   await ensureMessagesReplyColumns(db);
   await ensureMessageReactionsTable(db);
 
+  // Pinned messages: owner/mods/admins can highlight messages for the room.
+  await ensureMessagesPinnedColumn(db);
+
   // Seed Room 0 (the directory lobby) during migration so it's always present.
   await seedRoomZero(db);
 
   // Board groups: admin-curated groupings of public rooms on the board tab.
   await ensureBoardGroupsTable(db);
   await ensureBoardGroupRoomsTable(db);
+
+  // Forum rooms: a post-first discussion board with threads.
+  await ensureGroupChatsForumColumn(db);
+  await ensureForumPostsTable(db);
+  await ensureMessagesForumPostIdColumn(db);
 }
 
 /**
@@ -464,6 +472,19 @@ async function ensureMessagesReplyColumns(db: DB): Promise<void> {
   }
 }
 
+/** Pinned flag on messages. Owners, mods, and admins can toggle this. */
+async function ensureMessagesPinnedColumn(db: DB): Promise<void> {
+  try {
+    const cols = await db.all('PRAGMA table_info(messages)');
+    if (!cols.some((c) => c.name === 'pinned')) {
+      await db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+      console.log('messages table migrated: added pinned');
+    }
+  } catch (err) {
+    console.error('messages pinned migration failed:', (err as Error).message);
+  }
+}
+
 /** Emoji reactions, one row per (message, user, emoji). */
 async function ensureMessageReactionsTable(db: DB): Promise<void> {
   try {
@@ -500,6 +521,60 @@ async function ensureMessagesFileColumns(db: DB): Promise<void> {
     }
   } catch (err) {
     console.error('messages file columns migration failed:', (err as Error).message);
+  }
+}
+
+/** Forum room flag on group_chats. */
+async function ensureGroupChatsForumColumn(db: DB): Promise<void> {
+  try {
+    const cols = await db.all('PRAGMA table_info(group_chats)');
+    if (!cols.some((c) => c.name === 'is_forum')) {
+      await db.exec(
+        'ALTER TABLE group_chats ADD COLUMN is_forum INTEGER NOT NULL DEFAULT 0'
+      );
+      console.log('group_chats table migrated: added is_forum');
+    }
+  } catch (err) {
+    console.error('group_chats is_forum migration failed:', (err as Error).message);
+  }
+}
+
+/** Forum posts — one row per thread. */
+async function ensureForumPostsTable(db: DB): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS forum_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_chat_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        author_id INTEGER NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_forum_posts_gc ON forum_posts(group_chat_id);'
+    );
+  } catch (err) {
+    console.error('forum_posts migration failed:', (err as Error).message);
+  }
+}
+
+/** forum_post_id on messages links a message to a forum thread. */
+async function ensureMessagesForumPostIdColumn(db: DB): Promise<void> {
+  try {
+    const cols = await db.all('PRAGMA table_info(messages)');
+    if (!cols.some((c) => c.name === 'forum_post_id')) {
+      await db.exec('ALTER TABLE messages ADD COLUMN forum_post_id INTEGER');
+      console.log('messages table migrated: added forum_post_id');
+      await db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_messages_forum_post ON messages(forum_post_id, sent_at, id);'
+      );
+    }
+  } catch (err) {
+    console.error('messages forum_post_id migration failed:', (err as Error).message);
   }
 }
 
@@ -583,9 +658,9 @@ export async function isRoomMember(
 export async function getUserRooms(
   db: DB,
   userId: number
-): Promise<Array<{ id: number; name: string; is_hidden: number; is_readonly: number; is_anonymous: number; is_transparent: number; is_public: number }>> {
+): Promise<Array<{ id: number; name: string; is_hidden: number; is_readonly: number; is_anonymous: number; is_transparent: number; is_public: number; is_forum: number }>> {
   return db.all(
-    `SELECT g.id, g.name, g.is_hidden, g.is_readonly, g.is_anonymous, g.is_transparent, g.is_public
+    `SELECT g.id, g.name, g.is_hidden, g.is_readonly, g.is_anonymous, g.is_transparent, g.is_public, g.is_forum
      FROM group_chats g
      JOIN room_members m ON m.room_id = g.id
      WHERE m.user_id = ?
@@ -623,11 +698,12 @@ export async function addMessageToTable(
   userId: number | null = null,
   replyToId: number | null = null,
   replyQuote: string | null = null,
-  replyAuthor: string | null = null
+  replyAuthor: string | null = null,
+  forumPostId: number | null = null
 ): Promise<number> {
   const query = `INSERT INTO messages
-    (group_chat_id, display_name, message_text, gif_url, sent_at, avatar_url, file_url, file_name, file_type, user_id, reply_to_id, reply_quote, reply_author)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    (group_chat_id, display_name, message_text, gif_url, sent_at, avatar_url, file_url, file_name, file_type, user_id, reply_to_id, reply_quote, reply_author, forum_post_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   const result = await db.run(query, [
     groupChatId,
     displayNameText,
@@ -642,8 +718,113 @@ export async function addMessageToTable(
     replyToId,
     replyQuote,
     replyAuthor,
+    forumPostId,
   ]);
   return Number(result.lastID);
+}
+
+// --------------------------------------------------------------------------
+// Forum posts
+// --------------------------------------------------------------------------
+
+export async function createForumPost(
+  db: DB,
+  groupChatId: number,
+  title: string,
+  content: string,
+  authorId: number,
+  displayName: string
+): Promise<number> {
+  const now = sqliteNow();
+  const result = await db.run(
+    `INSERT INTO forum_posts (group_chat_id, title, content, author_id, display_name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [groupChatId, title, content, authorId, displayName, now, now]
+  );
+  return Number(result.lastID);
+}
+
+export async function getForumPost(db: DB, postId: number) {
+  return db.get('SELECT * FROM forum_posts WHERE id = ?', [postId]);
+}
+
+export async function getForumPosts(
+  db: DB,
+  groupChatId: number,
+  sort: 'recent' | 'date' | 'alpha' = 'recent',
+  limit: number = 50,
+  offset: number = 0
+) {
+  let order = 'fp.updated_at DESC, fp.id DESC';
+  if (sort === 'date') order = 'fp.created_at DESC, fp.id DESC';
+  if (sort === 'alpha') order = 'fp.title COLLATE NOCASE ASC, fp.id ASC';
+
+  return db.all(
+    `SELECT fp.*,
+      (SELECT COUNT(*) FROM messages m WHERE m.forum_post_id = fp.id) AS reply_count
+     FROM forum_posts fp
+     WHERE fp.group_chat_id = ?
+     ORDER BY ${order}
+     LIMIT ? OFFSET ?`,
+    [groupChatId, limit, offset]
+  );
+}
+
+export async function searchForumPosts(
+  db: DB,
+  groupChatId: number,
+  query: string
+) {
+  // Fuzzy: LIKE with % wildcards on both sides.
+  const pattern = `%${query}%`;
+  return db.all(
+    `SELECT fp.*,
+      (SELECT COUNT(*) FROM messages m WHERE m.forum_post_id = fp.id) AS reply_count
+     FROM forum_posts fp
+     WHERE fp.group_chat_id = ? AND (fp.title LIKE ? OR fp.content LIKE ?)
+     ORDER BY fp.updated_at DESC
+     LIMIT 50`,
+    [groupChatId, pattern, pattern]
+  );
+}
+
+export async function countForumPosts(db: DB, groupChatId: number): Promise<number> {
+  const row = await db.get(
+    'SELECT COUNT(*) AS cnt FROM forum_posts WHERE group_chat_id = ?',
+    [groupChatId]
+  );
+  return Number(row?.cnt ?? 0);
+}
+
+export async function bumpForumPost(db: DB, postId: number): Promise<void> {
+  await db.run(
+    'UPDATE forum_posts SET updated_at = ? WHERE id = ?',
+    [sqliteNow(), postId]
+  );
+}
+
+/** Edit a forum post's title and/or content. Returns the updated row. */
+export async function editForumPost(
+  db: DB,
+  postId: number,
+  title: string,
+  content: string
+): Promise<void> {
+  await db.run(
+    'UPDATE forum_posts SET title = ?, content = ?, updated_at = ? WHERE id = ?',
+    [title, content, sqliteNow(), postId]
+  );
+}
+
+/** Delete a forum post and all its thread messages. */
+export async function deleteForumPost(db: DB, postId: number): Promise<void> {
+  // Clean up reactions on messages in this thread first (no FK cascade).
+  await db.run(
+    'DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE forum_post_id = ?)',
+    [postId]
+  );
+  await db.run('DELETE FROM messages WHERE forum_post_id = ?', [postId]);
+  await db.run('DELETE FROM forum_posts WHERE id = ?', [postId]);
 }
 
 export async function createGroupChat(
@@ -656,12 +837,13 @@ export async function createGroupChat(
   is_readonly: number | boolean = 0,
   is_anonymous: number | boolean = 0,
   is_transparent: number | boolean = 0,
-  is_public: number | boolean = 0
+  is_public: number | boolean = 0,
+  is_forum: number | boolean = 0
 ): Promise<void> {
   await db.run(
     `INSERT INTO group_chats (id, name, owner_user_id,
-      is_hidden, password_hash, is_readonly, is_anonymous, is_transparent, is_public)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      is_hidden, password_hash, is_readonly, is_anonymous, is_transparent, is_public, is_forum)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       gc_id,
       gc_name,
@@ -672,6 +854,7 @@ export async function createGroupChat(
       is_anonymous ? 1 : 0,
       is_transparent ? 1 : 0,
       is_public ? 1 : 0,
+      is_forum ? 1 : 0,
     ]
   );
   const flags: string[] = [];
@@ -679,6 +862,7 @@ export async function createGroupChat(
   if (is_readonly) flags.push('readonly');
   if (is_anonymous) flags.push('anonymous');
   if (is_transparent) flags.push('transparent');
+  if (is_forum) flags.push('forum');
   console.log(
     `GC created: ${gc_name} (ID: ${gc_id}) [${flags.join(', ') || 'none'}]`
   );
@@ -693,6 +877,7 @@ export async function destroyGroupChat(db: DB, gc_id: number): Promise<void> {
     [gc_id]
   );
   await db.run('DELETE FROM messages WHERE group_chat_id = ?', [gc_id]);
+  await db.run('DELETE FROM forum_posts WHERE group_chat_id = ?', [gc_id]);
   await db.run('DELETE FROM room_members WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM room_moderators WHERE room_id = ?', [gc_id]);
   await db.run('DELETE FROM room_bans WHERE room_id = ?', [gc_id]);

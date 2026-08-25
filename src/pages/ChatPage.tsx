@@ -13,6 +13,8 @@ import {
 import type { NotifSettings } from "../services/storage";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
+import ForumPage from "../components/ForumPage";
+import ForumPostPage from "../components/ForumPostPage";
 import CommandPalette from "../components/CommandPalette";
 import ProfileModal from "../components/ProfileModal";
 import SettingsModal from "../components/SettingsModal";
@@ -28,6 +30,7 @@ import type { WSMessage, FileAttachment } from "../types";
 
 export default function ChatPage() {
   const [activeGCId, setActiveGCId] = useState<number | null>(null);
+  const [activeForumPostId, setActiveForumPostId] = useState<number | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [profileUser, setProfileUser] = useState<string | null>(null);
@@ -128,9 +131,17 @@ export default function ChatPage() {
     editMessage,
     deleteMessage,
     toggleReaction,
+    pinMessage,
+    unpinMessage,
     lastReadId,
     markAllRead,
-  } = useMessages(activeGCId);
+  } = useMessages(activeGCId, null);
+
+  // Separate message state for the active forum post thread (if any).
+  const forumMessages = useMessages(
+    activeForumPostId !== null ? activeGCId : null,
+    activeForumPostId
+  );
 
   // Compute which messages @ping the current user in the active room.
   const highlightedMessageIds = useMemo(() => {
@@ -193,8 +204,9 @@ export default function ChatPage() {
       handleWSNotifications(msg, isPingForMe);
 
       handleWSMessage(msg);
+      forumMessages.handleWSMessage(msg);
     },
-    [handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
+    [handleWSMessage, forumMessages.handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
   );
 
   const { send } = useWebSocket(handleWSIncoming);
@@ -207,9 +219,6 @@ export default function ChatPage() {
       replyToId?: number | null
     ) => {
       if (activeGCId === null) return;
-      // The server sets displayNameText from the authenticated session, so we
-      // don't send a client-supplied name (prevents identity spoofing). The
-      // reply target is resolved + quoted server-side too.
       send(
         JSON.stringify({
           type: "message",
@@ -220,10 +229,11 @@ export default function ChatPage() {
           fileName: file?.name ?? null,
           fileType: file?.type ?? null,
           replyToId: replyToId ?? null,
+          forumPostId: activeForumPostId ?? null,
         })
       );
     },
-    [activeGCId, send]
+    [activeGCId, activeForumPostId, send]
   );
 
   const handleSelectGC = useCallback(async (id: number) => {
@@ -244,6 +254,7 @@ export default function ChatPage() {
       return;
     }
     setActiveGCId(id);
+    setActiveForumPostId(null);
     // Reset notification counters for this room since the user just opened it.
     clearRoomNotifs(id);
     // Deliberately keep the sidebar open: closing it on room select made a
@@ -426,6 +437,50 @@ export default function ChatPage() {
     [toggleReaction]
   );
 
+  const handlePinMessage = useCallback(
+    async (messageId: number) => {
+      try {
+        await pinMessage(messageId);
+        setActionError("");
+      } catch (err) {
+        setActionError(errorMessage(err, "Failed to pin message"));
+      }
+    },
+    [pinMessage]
+  );
+
+  const handleUnpinMessage = useCallback(
+    async (messageId: number) => {
+      try {
+        await unpinMessage(messageId);
+        setActionError("");
+      } catch (err) {
+        setActionError(errorMessage(err, "Failed to unpin message"));
+      }
+    },
+    [unpinMessage]
+  );
+
+  /** Scroll the message list to a specific message by id. */
+  const handleJumpToMessage = useCallback((messageId: number) => {
+    // The message-line divs carry data-message-id attributes.
+    // We need to wait a tick in case the popover hasn't closed yet.
+    setTimeout(() => {
+      const line = document.querySelector(
+        `[data-testid="message-line"][data-message-id="${messageId}"]`
+      );
+      if (line) {
+        line.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Briefly flash the message to draw attention.
+        (line as HTMLElement).style.transition = "background-color 0.3s";
+        (line as HTMLElement).style.backgroundColor = "var(--accent-light)";
+        setTimeout(() => {
+          (line as HTMLElement).style.backgroundColor = "";
+        }, 1500);
+      }
+    }, 100);
+  }, []);
+
   const handleViewProfile = useCallback((username: string) => {
     setProfileUser(username);
     setProfileEditing(false);
@@ -588,35 +643,68 @@ export default function ChatPage() {
           )}
         </div>
       ) : !infoPage && !passwordPrompt ? (
-        <ChatWindow
-          key={activeGCId}
-          messages={messages}
-          gcName={gcName}
-          isOwner={isOwner}
-          viewerIsStaff={viewerIsStaff}
-          viewerIsAdmin={!!user?.isAdmin}
-          hasMore={hasMore}
-          loadingOlder={loadingOlder}
-          error={error || actionError || wsError}
-          onSendMessage={handleSendMessage}
-          onDeleteRoom={handleDeleteRoom}
-          onLeaveRoom={handleLeaveRoom}
-          onViewProfile={handleViewProfile}
-          onLoadOlder={loadOlder}
-          onSlashCommand={handleSlashCommand}
-          onJoinRoom={handleJoinRoom}
-          onModAction={handleModAction}
-          onRenameRoom={handleRenameRoom}
-          roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
-          currentUserId={user?.id ?? null}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
-          onToggleReaction={handleToggleReaction}
-          lastReadId={lastReadId}
-          onMarkAllRead={markAllRead}
-          highlightedMessageIds={highlightedMessageIds}
-          onClearError={() => { setActionError(""); setWsError(""); }}
-        />
+        // Forum room: show ForumPage or ForumPostPage instead of ChatWindow.
+        gcInfo?.is_forum ? (
+          activeForumPostId !== null ? (
+            <ForumPostPage
+              key={`${activeGCId}-${activeForumPostId}`}
+              groupChatId={activeGCId!}
+              forumPostId={activeForumPostId}
+              gcName={gcName}
+              onClosePost={() => setActiveForumPostId(null)}
+              viewerIsStaff={viewerIsStaff}
+              viewerIsAdmin={!!user?.isAdmin}
+              currentUserId={user?.id ?? null}
+              onViewProfile={handleViewProfile}
+              onJoinRoom={handleJoinRoom}
+              onModAction={handleModAction}
+              onRenameRoom={handleRenameRoom}
+              isOwner={isOwner}
+              roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
+            />
+          ) : (
+            <ForumPage
+              key={activeGCId}
+              groupChatId={activeGCId!}
+              gcName={gcName}
+              onSelectPost={(id) => setActiveForumPostId(id)}
+            />
+          )
+        ) : (
+          <ChatWindow
+            key={activeGCId}
+            messages={messages}
+            gcName={gcName}
+            isOwner={isOwner}
+            viewerIsStaff={viewerIsStaff}
+            viewerIsAdmin={!!user?.isAdmin}
+            hasMore={hasMore}
+            loadingOlder={loadingOlder}
+            error={error || actionError || wsError}
+            onSendMessage={handleSendMessage}
+            onDeleteRoom={handleDeleteRoom}
+            onLeaveRoom={handleLeaveRoom}
+            onViewProfile={handleViewProfile}
+            onLoadOlder={loadOlder}
+            onSlashCommand={handleSlashCommand}
+            onJoinRoom={handleJoinRoom}
+            onModAction={handleModAction}
+            onRenameRoom={handleRenameRoom}
+            roomTypeNames={gcInfo ? roomTypeFullNames(gcInfo) : []}
+            currentUserId={user?.id ?? null}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onToggleReaction={handleToggleReaction}
+            lastReadId={lastReadId}
+            onMarkAllRead={markAllRead}
+            highlightedMessageIds={highlightedMessageIds}
+            onClearError={() => { setActionError(""); setWsError(""); }}
+            onPinMessage={handlePinMessage}
+            onUnpinMessage={handleUnpinMessage}
+            onJumpToMessage={handleJumpToMessage}
+            groupChatId={activeGCId!}
+          />
+        )
       ) : null}
 
       <CommandPalette

@@ -64,6 +64,10 @@ function renderWindow(overrides: Partial<React.ComponentProps<typeof ChatWindow>
       lastReadId={0}
       onMarkAllRead={noop}
       highlightedMessageIds={new Set()}
+      onPinMessage={noop}
+      onUnpinMessage={noop}
+      onJumpToMessage={noop}
+      groupChatId={1}
       {...overrides}
     />
   );

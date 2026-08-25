@@ -69,14 +69,17 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let prev: Message | null = null;
   let prevTs: number | null = null;
+  let prevDate: string | null = null;
 
   for (const msg of messages) {
     const author = msg.display_name || "unknown";
     const ts = parseTimestampMs(msg.sent_at);
+    const thisDate = isoDate(msg.sent_at);
     const sameAuthor = prev && (prev.display_name || "unknown") === author;
+    const sameDay = prevDate !== null && prevDate === thisDate;
     const withinGap = prevTs !== null && ts !== null && ts - prevTs <= GROUP_GAP_MS;
 
-    if (sameAuthor && withinGap && groups.length > 0) {
+    if (sameAuthor && sameDay && withinGap && groups.length > 0) {
       groups[groups.length - 1].messages.push(msg);
     } else {
       groups.push({
@@ -91,6 +94,7 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
     }
     prev = msg;
     prevTs = ts;
+    prevDate = thisDate;
   }
   return groups;
 }

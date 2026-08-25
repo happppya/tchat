@@ -1,6 +1,7 @@
 import type {
   GroupChat,
   Message,
+  ForumPost,
   GiphyResponse,
   AuthUser,
   UserProfile,
@@ -86,7 +87,8 @@ function extractUser(body: unknown): AuthUser {
 export async function fetchMessages(
   groupChatId: number,
   limit = MESSAGES_PAGE_SIZE,
-  before?: { sentAt: string; id: number } | null
+  before?: { sentAt: string; id: number } | null,
+  forumPostId?: number | null
 ): Promise<Message[]> {
   const params = new URLSearchParams({
     groupChatId: String(groupChatId),
@@ -95,6 +97,9 @@ export async function fetchMessages(
   if (before) {
     params.set("beforeSentAt", before.sentAt);
     params.set("beforeId", String(before.id));
+  }
+  if (forumPostId != null) {
+    params.set("forumPostId", String(forumPostId));
   }
   return request<Message[]>(`/getMessages?${params.toString()}`);
 }
@@ -124,6 +129,7 @@ export async function createGroupChat(
     isAnonymous?: boolean;
     isTransparent?: boolean;
     isPublic?: boolean;
+    isForum?: boolean;
   } = {}
 ): Promise<void> {
   await request(
@@ -204,6 +210,88 @@ export async function reactToMessage(
     jsonBody({ messageId, emoji })
   );
   return body.reactions ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Forum
+// ---------------------------------------------------------------------------
+
+/** Create a new forum post and return it. */
+export async function createForumPost(
+  groupChatId: number,
+  title: string,
+  content: string
+): Promise<ForumPost> {
+  return request<ForumPost>("/createForumPost", jsonBody({ groupChatId, title, content }));
+}
+
+/** List forum posts for a room. */
+export async function fetchForumPosts(
+  groupChatId: number,
+  sort: 'recent' | 'date' | 'alpha' = 'recent',
+  offset: number = 0
+): Promise<ForumPost[]> {
+  const qs = new URLSearchParams({
+    groupChatId: String(groupChatId),
+    sort,
+    offset: String(offset),
+  });
+  return request<ForumPost[]>(`/getForumPosts?${qs.toString()}`);
+}
+
+/** Search forum posts by title/content. */
+export async function searchForumPosts(
+  groupChatId: number,
+  query: string
+): Promise<ForumPost[]> {
+  const qs = new URLSearchParams({ groupChatId: String(groupChatId), query });
+  return request<ForumPost[]>(`/searchForumPosts?${qs.toString()}`);
+}
+
+/** Get a single forum post by id. */
+export async function getForumPost(postId: number): Promise<ForumPost> {
+  return request<ForumPost>(`/getForumPost?postId=${postId}`);
+}
+
+/** Edit a forum post (author, owner, or admin). */
+export async function editForumPost(
+  postId: number,
+  title: string,
+  content: string
+): Promise<ForumPost> {
+  return request<ForumPost>("/editForumPost", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postId, title, content }),
+  });
+}
+
+/** Delete a forum post and all its thread messages (author, owner, or admin). */
+export async function deleteForumPost(postId: number): Promise<void> {
+  await request("/deleteForumPost", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postId }),
+  });
+}
+
+/** Pin a message (owner, mod, or admin only). */
+export async function pinMessage(
+  messageId: number
+): Promise<{ pinned: number }> {
+  return request("/pinMessage", jsonBody({ messageId }));
+}
+
+/** Unpin a message (owner, mod, or admin only). */
+export async function unpinMessage(
+  messageId: number
+): Promise<{ pinned: number }> {
+  return request("/unpinMessage", jsonBody({ messageId }));
+}
+
+/** Fetch pinned messages for a room. */
+export async function fetchPinnedMessages(groupChatId: number): Promise<Message[]> {
+  return request<Message[]>(`/getPinnedMessages?groupChatId=${groupChatId}`);
 }
 
 /** Upload response: the served URL plus display metadata. */

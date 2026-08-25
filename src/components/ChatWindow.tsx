@@ -1,8 +1,9 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from "react";
+import React, { useRef, useEffect, useMemo, useState, useCallback } from "react";
 import type { FileAttachment, Message, ReplyTarget } from "../types";
 import { groupMessages, messagePreview, isoDate, formatDay } from "../utils/format";
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
+import PinnedMessages from "./PinnedMessages";
 
 interface Props {
   messages: Message[];
@@ -46,6 +47,13 @@ interface Props {
   highlightedMessageIds: ReadonlySet<number>;
   /** Called when the user dismisses the error banner. */
   onClearError?: () => void;
+  /** Pin/unpin a message (staff only). */
+  onPinMessage: (messageId: number) => void;
+  onUnpinMessage: (messageId: number) => void;
+  /** Called when the user clicks a pinned message to scroll to it. */
+  onJumpToMessage: (messageId: number) => void;
+  /** The group chat id, needed by the pinned messages popover. */
+  groupChatId: number;
 }
 
 export default function ChatWindow({
@@ -75,6 +83,10 @@ export default function ChatWindow({
   onMarkAllRead,
   highlightedMessageIds,
   onClearError,
+  onPinMessage,
+  onUnpinMessage,
+  onJumpToMessage,
+  groupChatId,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -275,6 +287,7 @@ export default function ChatWindow({
           — {messages.length} msg{messages.length === 1 ? "" : "s"}
         </span>
         <span className="ml-auto flex items-center gap-2">
+          <PinnedMessages groupChatId={groupChatId} onJumpToMessage={onJumpToMessage} />
           <button
             onClick={onLeaveRoom}
             data-testid="leave-room-button"
@@ -339,7 +352,7 @@ export default function ChatWindow({
           </div>
         )}
         {groups.map((group, idx) => (
-          <>
+          <React.Fragment key={group.key}>
             {/* Day divider — inserted when the calendar day changes. */}
             {dayBoundaries.has(idx) && (
               <div
@@ -367,7 +380,6 @@ export default function ChatWindow({
               </div>
             )}
             <MessageBubble
-              key={group.key}
               group={group}
               currentUserId={currentUserId}
               viewerIsStaff={viewerIsStaff}
@@ -378,9 +390,11 @@ export default function ChatWindow({
               onReply={handleReply}
               onToggleReaction={onToggleReaction}
               onModAction={onModAction}
+              onPinMessage={onPinMessage}
+              onUnpinMessage={onUnpinMessage}
               highlightedMessageIds={highlightedMessageIds}
             />
-          </>
+          </React.Fragment>
         ))}
         <div ref={messagesEndRef} />
       </div>

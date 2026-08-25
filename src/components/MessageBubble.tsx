@@ -24,6 +24,9 @@ interface Props {
   onToggleReaction: (messageId: number, emoji: string) => void;
   /** Staff actions on a user: kick, ban, mute, mod, demod. */
   onModAction: (username: string, action: string) => void;
+  /** Pin/unpin a message (staff only). */
+  onPinMessage: (messageId: number) => void;
+  onUnpinMessage: (messageId: number) => void;
   /** Set of message ids that @ping the current user. */
   highlightedMessageIds: ReadonlySet<number>;
 }
@@ -44,9 +47,13 @@ export default function MessageBubble({
   onReply,
   onToggleReaction,
   onModAction,
+  onPinMessage,
+  onUnpinMessage,
   highlightedMessageIds,
 }: Props) {
   const time = formatGroupTime(group.firstSentAt);
+  // True when any message in this group is pinned.
+  const hasPinned = group.messages.some((m) => m.pinned === 1);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [nameMenuOpen, setNameMenuOpen] = useState(false);
@@ -76,7 +83,9 @@ export default function MessageBubble({
   return (
     <div
       data-testid="message-bubble"
-      className="px-1 py-1 leading-relaxed"
+      className={`px-1 py-1 leading-relaxed ${
+        hasPinned ? "bg-[var(--accent)]/5 border-l-2 border-[var(--accent)]/40" : ""
+      }`}
     >
       {/* Author header: avatar + clickable name + time */}
       <div className="flex items-center gap-1.5 flex-wrap relative">
@@ -178,6 +187,7 @@ export default function MessageBubble({
                msg.user_id !== undefined &&
                msg.user_id === currentUserId)
             }
+            canManage={viewerIsStaff || viewerIsAdmin}
             editing={editingId === msg.id}
             draft={draft}
             onStartEdit={() => startEdit(msg)}
@@ -187,6 +197,8 @@ export default function MessageBubble({
             onDelete={() => confirmDelete(msg)}
             onReply={() => onReply(msg)}
             onToggleReaction={(emoji) => onToggleReaction(msg.id, emoji)}
+            onPin={() => onPinMessage(msg.id)}
+            onUnpin={() => onUnpinMessage(msg.id)}
             highlighted={highlightedMessageIds.has(msg.id)}
           />
         ))}
@@ -198,6 +210,7 @@ export default function MessageBubble({
 interface LineProps {
   message: Message;
   isOwn: boolean;
+  canManage: boolean;
   editing: boolean;
   draft: string;
   onStartEdit: () => void;
@@ -207,12 +220,15 @@ interface LineProps {
   onDelete: () => void;
   onReply: () => void;
   onToggleReaction: (emoji: string) => void;
+  onPin: () => void;
+  onUnpin: () => void;
   highlighted: boolean;
 }
 
 function MessageLine({
   message,
   isOwn,
+  canManage,
   editing,
   draft,
   onStartEdit,
@@ -222,8 +238,11 @@ function MessageLine({
   onDelete,
   onReply,
   onToggleReaction,
+  onPin,
+  onUnpin,
   highlighted,
 }: LineProps) {
+  const isPinned = message.pinned === 1;
   const [pickerOpen, setPickerOpen] = useState(false);
   const text = message.message_text || "";
   const gifUrl = message.gif_url;
@@ -275,6 +294,7 @@ function MessageLine({
   return (
     <div
       data-testid="message-line"
+      data-message-id={message.id}
       className={`group relative flex items-start gap-2 rounded-sm transition-colors hover:bg-[var(--bg-tertiary)] ${
         highlighted
           ? "bg-[var(--accent)]/10 border-l-2 border-[var(--accent)] pl-2 -ml-2"
@@ -381,6 +401,15 @@ function MessageLine({
           testId="reply-message-button"
           onClick={onReply}
         />
+        {canManage && (
+          <ActionButton
+            label={isPinned ? "unpin" : "pin"}
+            icon="📌"
+            testId={isPinned ? "unpin-message-button" : "pin-message-button"}
+            active={isPinned}
+            onClick={isPinned ? onUnpin : onPin}
+          />
+        )}
         {isOwn && (
           <>
             <ActionButton
@@ -428,6 +457,7 @@ interface ActionButtonProps {
   onClick: () => void;
   testId?: string;
   danger?: boolean;
+  active?: boolean;
 }
 
 /** A small icon action with a tooltip that appears above it on hover. */
@@ -437,6 +467,7 @@ function ActionButton({
   onClick,
   testId,
   danger,
+  active,
 }: ActionButtonProps) {
   return (
     <button
@@ -444,9 +475,11 @@ function ActionButton({
       data-testid={testId}
       aria-label={label}
       className={`group/action relative flex items-center justify-center h-7 w-7 border bg-[var(--bg-secondary)] text-xs cursor-pointer transition-colors ${
-        danger
-          ? "border-[var(--border-primary)] text-[var(--text-secondary)] hover:text-[var(--error)] hover:border-[var(--error)]/60"
-          : "border-[var(--border-primary)] text-[var(--text-secondary)] hover:text-[var(--accent-light)] hover:border-[var(--accent)]/60"
+        active
+          ? "border-[var(--accent)]/60 text-[var(--accent-light)] hover:text-[var(--accent)] hover:border-[var(--accent)]"
+          : danger
+            ? "border-[var(--border-primary)] text-[var(--text-secondary)] hover:text-[var(--error)] hover:border-[var(--error)]/60"
+            : "border-[var(--border-primary)] text-[var(--text-secondary)] hover:text-[var(--accent-light)] hover:border-[var(--accent)]/60"
       }`}
     >
       <span

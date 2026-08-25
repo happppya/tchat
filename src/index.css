@@ -121,6 +121,175 @@ textarea {
   color: var(--accent);
 }
 
+/* ── Rich formatting tags ──────────────────────────────────────────── */
+
+/* Horizontal rule — a clean divider line */
+.md-hr {
+  border: none;
+  border-top: 1px solid var(--border-primary);
+  margin: 8px 0;
+  opacity: 0.6;
+}
+
+/* <big> — larger, bolder text */
+.md-big {
+  font-size: 1.35em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* <small> — subtle footnote-style text */
+.md-small {
+  font-size: 0.78em;
+  opacity: 0.72;
+}
+
+/* <subtitle> — secondary heading, muted but prominent */
+.md-subtitle {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin: 4px 0;
+}
+
+/* <header> — bold section header with accent underline */
+.md-header {
+  font-size: 1.2em;
+  font-weight: 700;
+  color: var(--accent-light);
+  margin: 6px 0 2px;
+  padding-bottom: 2px;
+  border-bottom: 2px solid var(--accent);
+}
+
+/* <h1> — largest heading */
+.md-h1 {
+  font-size: 1.4em;
+  font-weight: 700;
+  color: var(--accent);
+  text-shadow: 0 0 6px var(--accent);
+  margin: 8px 0 4px;
+}
+
+/* <h2> — medium heading */
+.md-h2 {
+  font-size: 1.2em;
+  font-weight: 700;
+  color: var(--accent-light);
+  margin: 6px 0 3px;
+}
+
+/* <h3> — smaller heading */
+.md-h3 {
+  font-size: 1.05em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 4px 0 2px;
+}
+
+/* <warn> — warning callout box */
+.md-warn {
+  border: 1px solid #b58900;
+  border-left: 3px solid #b58900;
+  background: rgba(181, 137, 0, 0.1);
+  color: #b58900;
+  padding: 4px 8px;
+  margin: 4px 0;
+  font-size: 0.9em;
+}
+
+/* <error> — inline error/red text */
+.md-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* <success> — inline success/green text */
+.md-success {
+  color: #2aa198;
+  font-weight: 600;
+}
+
+/* <info> — inline info/blue text */
+.md-info {
+  color: var(--accent-light);
+  font-weight: 500;
+}
+
+/* <quote> — blockquote with left accent bar */
+.md-quote {
+  border-left: 3px solid var(--accent);
+  padding: 4px 10px;
+  margin: 4px 0;
+  color: var(--text-muted);
+  font-style: italic;
+  opacity: 0.85;
+}
+
+/* <center> — center-aligned content */
+.md-center {
+  text-align: center;
+  margin: 4px 0;
+}
+
+/* <rainbow> — animated rainbow gradient text */
+@keyframes md-rainbow-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.md-rainbow {
+  background: linear-gradient(
+    90deg,
+    #ff0000, #ff8800, #ffff00, #00cc00, #0088ff, #4400cc, #ff00ff
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  animation: md-rainbow-shift 4s linear infinite;
+}
+
+/* <spoiler> — hidden text, revealed on click/hover */
+.md-spoiler {
+  background: var(--text-primary);
+  color: transparent;
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  user-select: none;
+}
+.md-spoiler:focus,
+.md-spoiler:active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  user-select: auto;
+}
+
+/* <mono> — monospace inline (similar to code but styled differently) */
+.md-mono {
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+  font-size: 0.92em;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+/* <highlight> — yellow highlighter effect */
+.md-highlight {
+  background: rgba(255, 230, 0, 0.25);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* <strike> text is handled by the <del> element (same as ~~text~~) */
+
 /* Blinking cursor block — used in prompts / typing indicators */
 @keyframes blink {
   0%, 49% { opacity: 1; }

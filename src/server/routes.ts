@@ -49,6 +49,14 @@ import {
   removeRoomFromBoardGroup,
   reorderBoardGroups,
   reorderBoardGroupRooms,
+  createForumPost,
+  getForumPost,
+  getForumPosts,
+  searchForumPosts,
+  countForumPosts,
+  bumpForumPost,
+  editForumPost,
+  deleteForumPost,
   type DB,
 } from './db';
 
@@ -302,7 +310,7 @@ export function createRouter({
       return res.status(403).json({ error: 'Only admins can create rooms' });
     }
 
-    const { id, name, isHidden, password, isReadonly, isAnonymous, isTransparent, isPublic } =
+    const { id, name, isHidden, password, isReadonly, isAnonymous, isTransparent, isPublic, isForum } =
       req.body || {};
     const cleanName = typeof name === 'string' ? name.trim() : '';
     const gcId = parseRoomCode(id);
@@ -351,7 +359,8 @@ export function createRouter({
         isReadonly ? 1 : 0,
         isAnonymous ? 1 : 0,
         isTransparent ? 1 : 0,
-        isPublic ? 1 : 0
+        isPublic ? 1 : 0,
+        isForum ? 1 : 0
       );
       await addRoomMember(db, req.session!.userId, gcId);
       res.status(201).json({ message: 'Group chat created successfully' });
@@ -589,6 +598,135 @@ export function createRouter({
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Forum
+  // -------------------------------------------------------------------------
+
+  router.post('/createForumPost', requireAuth, async (req: Request, res: Response) => {
+    const { groupChatId, title, content } = req.body || {};
+    const gcId = parseRoomCode(groupChatId);
+    if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
+    if (!(await validateGCID(db, gcId))) return res.status(404).json({ error: 'Room not found' });
+    if (!(await isRoomMember(db, req.session!.userId, gcId))) {
+      return res.status(403).json({ error: 'Join this room before posting' });
+    }
+
+    const cleanTitle = typeof title === 'string' ? title.trim().slice(0, 120) : '';
+    const cleanContent = typeof content === 'string' ? content.trim().slice(0, 8_000) : '';
+    if (!cleanTitle) return res.status(400).json({ error: 'Post title is required' });
+
+    // 512 post cap per forum room
+    const cnt = await countForumPosts(db, gcId);
+    if (cnt >= 512) {
+      return res.status(400).json({ error: 'This forum has reached the maximum of 512 posts' });
+    }
+
+    const postId = await createForumPost(
+      db, gcId, cleanTitle, cleanContent,
+      req.session!.userId, req.session!.username
+    );
+
+    // Also post a system message in the main chat announcing the new post
+    // (only if the room is not in forum mode, i.e., a regular chat that
+    // also has a forum tab).
+    const post = await getForumPost(db, postId);
+    res.status(201).json(post);
+  });
+
+  router.get('/getForumPosts', requireAuth, async (req: Request, res: Response) => {
+    const gcId = Number(req.query.groupChatId);
+    const sort = (String(req.query.sort || 'recent')) as 'recent' | 'date' | 'alpha';
+    const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
+
+    if (!gcId || !(await validateGCID(db, gcId))) {
+      return res.status(400).json({ error: 'Invalid group chat ID' });
+    }
+    if (gcId !== 0 && !(await isRoomMember(db, req.session!.userId, gcId))) {
+      return res.status(403).json({ error: 'You are not a member of this room' });
+    }
+
+    const posts = await getForumPosts(db, gcId, sort, 50, offset);
+    res.json(posts);
+  });
+
+  router.get('/searchForumPosts', requireAuth, async (req: Request, res: Response) => {
+    const gcId = Number(req.query.groupChatId);
+    const query = String(req.query.query || '').trim().slice(0, 200);
+
+    if (!gcId || !(await validateGCID(db, gcId))) {
+      return res.status(400).json({ error: 'Invalid group chat ID' });
+    }
+    if (gcId !== 0 && !(await isRoomMember(db, req.session!.userId, gcId))) {
+      return res.status(403).json({ error: 'You are not a member of this room' });
+    }
+    if (!query) {
+      const posts = await getForumPosts(db, gcId, 'recent', 50, 0);
+      return res.json(posts);
+    }
+
+    const posts = await searchForumPosts(db, gcId, query);
+    res.json(posts);
+  });
+
+  router.get('/getForumPost', requireAuth, async (req: Request, res: Response) => {
+    const postId = parseInt(String(req.query.postId), 10);
+    if (!Number.isInteger(postId) || postId < 1) {
+      return res.status(400).json({ error: 'Invalid post id' });
+    }
+    const post = await getForumPost(db, postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await isRoomMember(db, req.session!.userId, post.group_chat_id))) {
+      return res.status(403).json({ error: 'You are not a member of this room' });
+    }
+    res.json(post);
+  });
+
+  router.put('/editForumPost', requireAuth, async (req: Request, res: Response) => {
+    const { postId, title, content } = req.body || {};
+    const pid = parseInt(String(postId), 10);
+    if (!Number.isInteger(pid) || pid < 1) {
+      return res.status(400).json({ error: 'Invalid post id' });
+    }
+    const cleanTitle = typeof title === 'string' ? title.trim().slice(0, 120) : '';
+    const cleanContent = typeof content === 'string' ? content.trim().slice(0, 8_000) : '';
+    if (!cleanTitle) return res.status(400).json({ error: 'Post title is required' });
+
+    const post = await getForumPost(db, pid);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const actorId = req.session!.userId;
+    const isAdmin = await isSiteAdmin(db, actorId);
+    const isStaff = await isRoomStaffOrAdmin(db, actorId, post.group_chat_id);
+    if (!isAdmin && !isStaff && post.author_id !== actorId) {
+      return res.status(403).json({ error: 'Only the author, room staff, or admins can edit this post' });
+    }
+
+    await editForumPost(db, pid, cleanTitle, cleanContent);
+    const updated = await getForumPost(db, pid);
+    res.json(updated);
+  });
+
+  router.delete('/deleteForumPost', requireAuth, async (req: Request, res: Response) => {
+    const { postId } = req.body || {};
+    const pid = parseInt(String(postId), 10);
+    if (!Number.isInteger(pid) || pid < 1) {
+      return res.status(400).json({ error: 'Invalid post id' });
+    }
+
+    const post = await getForumPost(db, pid);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const actorId = req.session!.userId;
+    const isAdmin = await isSiteAdmin(db, actorId);
+    const isStaff = await isRoomStaffOrAdmin(db, actorId, post.group_chat_id);
+    if (!isAdmin && !isStaff && post.author_id !== actorId) {
+      return res.status(403).json({ error: 'Only the author, room staff, or admins can delete this post' });
+    }
+
+    await deleteForumPost(db, pid);
+    res.json({ message: 'Post deleted' });
+  });
+
   router.post('/joinRoom', requireAuth, async (req: Request, res: Response) => {
     const { groupChatId, password } = req.body || {};
     const gcId = parseRoomCode(groupChatId);
@@ -658,7 +796,7 @@ export function createRouter({
 
   router.get('/getMessages', requireAuth, async (req: Request, res: Response) => {
     const start = performance.now();
-    const { groupChatId, limit: rawLimit, numMessages, beforeSentAt, beforeId } =
+    const { groupChatId, limit: rawLimit, numMessages, beforeSentAt, beforeId, forumPostId } =
       req.query;
 
     // Pagination is cursor-based (keyset), not OFFSET-based.
@@ -669,6 +807,7 @@ export function createRouter({
     );
 
     const gcId = Number(groupChatId);
+    const fpId = forumPostId ? Number(forumPostId) : null;
     if (groupChatId && !(await validateGCID(db, gcId))) {
       return res.status(400).json({ error: 'Invalid group chat ID' });
     }
@@ -691,21 +830,50 @@ export function createRouter({
         .json({ error: 'beforeSentAt and beforeId must be provided together' });
     }
 
+    // Build WHERE clause: always filter by group_chat_id, optionally by forum_post_id.
+    // When forumPostId is set, only messages for that thread are returned.
+    // When null, only messages without a forum_post_id (the main room feed).
+    const fpClause = fpId !== null
+      ? 'AND forum_post_id = ?'
+      : 'AND forum_post_id IS NULL';
+
     let messages: any[];
     if (beforeSentAt && beforeId) {
-      messages = await db.all(
-        `SELECT * FROM messages
-         WHERE group_chat_id = ?
-           AND (sent_at < ? OR (sent_at = ? AND id < ?))
-         ORDER BY sent_at DESC, id DESC
-         LIMIT ?`,
-        [gcId, String(beforeSentAt), String(beforeSentAt), Number(beforeId), limit]
-      );
+      const params: any[] = [gcId, String(beforeSentAt), String(beforeSentAt), Number(beforeId), limit];
+      if (fpId !== null) params.splice(1, 0, fpId); // insert after gcId
+      else params.splice(1, 0, null); // won't match IS NULL... actually need different approach
+      // Simpler: just build two separate sets of params.
+      if (fpId !== null) {
+        messages = await db.all(
+          `SELECT * FROM messages
+           WHERE group_chat_id = ? AND forum_post_id = ?
+             AND (sent_at < ? OR (sent_at = ? AND id < ?))
+           ORDER BY sent_at DESC, id DESC
+           LIMIT ?`,
+          [gcId, fpId, String(beforeSentAt), String(beforeSentAt), Number(beforeId), limit]
+        );
+      } else {
+        messages = await db.all(
+          `SELECT * FROM messages
+           WHERE group_chat_id = ? AND forum_post_id IS NULL
+             AND (sent_at < ? OR (sent_at = ? AND id < ?))
+           ORDER BY sent_at DESC, id DESC
+           LIMIT ?`,
+          [gcId, String(beforeSentAt), String(beforeSentAt), Number(beforeId), limit]
+        );
+      }
     } else {
-      messages = await db.all(
-        'SELECT * FROM messages WHERE group_chat_id = ? ORDER BY sent_at DESC, id DESC LIMIT ?',
-        [gcId, limit]
-      );
+      if (fpId !== null) {
+        messages = await db.all(
+          'SELECT * FROM messages WHERE group_chat_id = ? AND forum_post_id = ? ORDER BY sent_at DESC, id DESC LIMIT ?',
+          [gcId, fpId, limit]
+        );
+      } else {
+        messages = await db.all(
+          'SELECT * FROM messages WHERE group_chat_id = ? AND forum_post_id IS NULL ORDER BY sent_at DESC, id DESC LIMIT ?',
+          [gcId, limit]
+        );
+      }
     }
 
     const end = performance.now();
@@ -881,6 +1049,77 @@ export function createRouter({
       existing.group_chat_id
     );
     res.json({ reactions });
+  });
+
+  // -------------------------------------------------------------------------
+  // Pinned messages
+  // -------------------------------------------------------------------------
+
+  router.post('/pinMessage', requireAuth, async (req: Request, res: Response) => {
+    const { messageId } = req.body || {};
+    const id = parseMessageId(messageId);
+    if (!id) return res.status(400).json({ error: 'Invalid message id' });
+
+    const msg = await db.get('SELECT * FROM messages WHERE id = ?', [id]);
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+
+    const actorId = req.session!.userId;
+    const isAdmin = await isSiteAdmin(db, actorId);
+    const isStaff = await isRoomStaffOrAdmin(db, actorId, msg.group_chat_id);
+    if (!isAdmin && !isStaff) {
+      return res.status(403).json({ error: 'Only room staff or admins can pin messages' });
+    }
+
+    await db.run('UPDATE messages SET pinned = 1 WHERE id = ?', [id]);
+    broadcast(
+      { type: 'pinMessage', groupChatId: msg.group_chat_id, messageId: id },
+      msg.group_chat_id
+    );
+    res.json({ pinned: 1 });
+  });
+
+  router.post('/unpinMessage', requireAuth, async (req: Request, res: Response) => {
+    const { messageId } = req.body || {};
+    const id = parseMessageId(messageId);
+    if (!id) return res.status(400).json({ error: 'Invalid message id' });
+
+    const msg = await db.get('SELECT * FROM messages WHERE id = ?', [id]);
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+
+    const actorId = req.session!.userId;
+    const isAdmin = await isSiteAdmin(db, actorId);
+    const isStaff = await isRoomStaffOrAdmin(db, actorId, msg.group_chat_id);
+    if (!isAdmin && !isStaff) {
+      return res.status(403).json({ error: 'Only room staff or admins can unpin messages' });
+    }
+
+    await db.run('UPDATE messages SET pinned = 0 WHERE id = ?', [id]);
+    broadcast(
+      { type: 'unpinMessage', groupChatId: msg.group_chat_id, messageId: id },
+      msg.group_chat_id
+    );
+    res.json({ pinned: 0 });
+  });
+
+  router.get('/getPinnedMessages', requireAuth, async (req: Request, res: Response) => {
+    const gcId = Number(req.query.groupChatId);
+    if (!gcId || !(await validateGCID(db, gcId))) {
+      return res.status(400).json({ error: 'Invalid group chat ID' });
+    }
+    if (gcId !== 0 && !(await isRoomMember(db, req.session!.userId, gcId))) {
+      return res.status(403).json({ error: 'You are not a member of this room' });
+    }
+    const messages = await db.all(
+      'SELECT * FROM messages WHERE group_chat_id = ? AND pinned = 1 ORDER BY sent_at DESC, id DESC',
+      [gcId]
+    );
+    // Strip user_id for non-admin viewers in anonymous rooms, matching getMessages.
+    const anon = await roomIsAnonymous(db, gcId);
+    const viewerIsAdmin = await isSiteAdmin(db, req.session!.userId);
+    if (anon && !viewerIsAdmin) {
+      for (const m of messages) m.user_id = null;
+    }
+    res.json(messages);
   });
 
   // -------------------------------------------------------------------------

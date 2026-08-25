@@ -26,6 +26,10 @@ export interface Message {
   reply_author?: string | null;
   /** Emoji reactions attached to this message. */
   reactions?: Reaction[];
+  /** forum_post_id links this message to a forum thread. Null for regular chat. */
+  forum_post_id?: number | null;
+  /** Whether this message has been pinned by an owner, mod, or admin. */
+  pinned?: number | null;
 }
 
 /** Aggregate emoji reaction on a message. */
@@ -55,6 +59,7 @@ export interface GroupChat {
   is_anonymous?: number | null;
   is_transparent?: number | null;
   is_public?: number | null;
+  is_forum?: number | null;
 }
 
 /** Saved group chat in local storage */
@@ -89,6 +94,8 @@ export interface WSMessage {
     | "kicked"
     | "banned"
     | "messageReactions"
+    | "pinMessage"
+    | "unpinMessage"
     | "error"
     | "pong";
   message?: string;
@@ -122,6 +129,8 @@ export interface WSMessage {
   fileUrl?: string | null;
   fileName?: string | null;
   fileType?: string | null;
+  /** forum post id for scoping messages to a thread. */
+  forumPostId?: number | null;
 }
 
 /** GIPHY image variants */
@@ -174,10 +183,21 @@ export interface FileAttachment {
   url: string;
   name: string;
   type: string;
-}
-
-/** Selected GIF state */
+}/** Selected GIF state */
 export interface SelectedGif {
   id: string;
   url: string;
+}
+
+/** A forum post / thread. */
+export interface ForumPost {
+  id: number;
+  group_chat_id: number;
+  title: string;
+  content: string;
+  author_id: number;
+  display_name: string;
+  created_at: string;
+  updated_at: string;
+  reply_count?: number;
 }

@@ -18,7 +18,7 @@ export interface RoomTypeTag {
 
 type RoomTypeFlags = Pick<
   GroupChat,
-  "is_anonymous" | "is_hidden" | "is_readonly" | "is_transparent" | "is_public"
+  "is_anonymous" | "is_hidden" | "is_readonly" | "is_transparent" | "is_public" | "is_forum"
 >;
 
 /** A room's type flags in a fixed order, each with a code + full name. */
@@ -29,6 +29,7 @@ export function roomTypeTags(room: RoomTypeFlags): RoomTypeTag[] {
   if (room.is_readonly) tags.push({ code: "[R]", full: "readonly" });
   if (room.is_transparent) tags.push({ code: "[T]", full: "transparent" });
   if (room.is_public) tags.push({ code: "[P]", full: "public" });
+  if (room.is_forum) tags.push({ code: "[F]", full: "forum" });
   return tags;
 }
 

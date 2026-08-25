@@ -12,6 +12,7 @@ import {
   roomIsAnonymous,
   getAnonName,
   addMessageToTable,
+  bumpForumPost,
   type DB,
 } from './db';
 
@@ -204,6 +205,7 @@ async function handleFrame(
     fileName = null,
     fileType = null,
     replyToId = null,
+    forumPostId = null,
   } = messageJSON;
   // The display name is the authenticated username unless the room is
   // anonymous and the user is not an admin.
@@ -332,6 +334,16 @@ async function handleFrame(
 
   // Store with the authenticated author id, then include the real DB id +
   // author id in the echo so clients can later edit/delete by id.
+
+  // Validate and parse forumPostId if present
+  let forumPostIdValue: number | null = null;
+  if (forumPostId !== null && forumPostId !== undefined && forumPostId !== '') {
+    forumPostIdValue = parseInt(forumPostId, 10);
+    if (!Number.isInteger(forumPostIdValue) || forumPostIdValue <= 0) {
+      forumPostIdValue = null;
+    }
+  }
+
   const messageId = await addMessageToTable(
     db,
     groupChatId,
@@ -346,7 +358,8 @@ async function handleFrame(
     session.userId,
     replyToIdValue,
     replyQuote,
-    replyAuthor
+    replyAuthor,
+    forumPostIdValue
   );
 
   // Broadcast a rebuilt payload. In anonymous rooms, strip userId so
@@ -369,7 +382,15 @@ async function handleFrame(
       replyToId: replyToIdValue,
       replyQuote,
       replyAuthor,
+      forumPostId: forumPostIdValue,
     },
     groupChatId
   );
+
+  // Bump the forum post's updated_at so it sorts by recent activity.
+  if (forumPostIdValue) {
+    try {
+      await bumpForumPost(db, forumPostIdValue);
+    } catch (_) { /* non-critical */ }
+  }
 }

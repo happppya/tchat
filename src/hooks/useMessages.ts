@@ -6,6 +6,8 @@ import {
   editMessage as editMessageRequest,
   deleteMessage as deleteMessageRequest,
   reactToMessage as reactToMessageRequest,
+  pinMessage as pinMessageRequest,
+  unpinMessage as unpinMessageRequest,
 } from "../services/api";
 import type { Reaction } from "../types";
 import { saveGC, getSavedGCs, getLastReadId, setLastReadId as persistLastReadId } from "../services/storage";
@@ -14,7 +16,7 @@ import { MESSAGES_PAGE_SIZE } from "../constants";
 /**
  * Manages message loading and real-time updates for the current group chat.
  */
-export function useMessages(groupChatId: number | null) {
+export function useMessages(groupChatId: number | null, forumPostId: number | null = null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [gcName, setGcName] = useState<string>("Group Chat");
   const [gcInfo, setGcInfo] = useState<GroupChat | null>(null);
@@ -37,7 +39,7 @@ export function useMessages(groupChatId: number | null) {
 
     try {
       const [msgs, info] = await Promise.all([
-        fetchMessages(gcId),
+        fetchMessages(gcId, MESSAGES_PAGE_SIZE, null, forumPostId),
         fetchGCInfo(gcId),
       ]);
       if (generation !== loadGenerationRef.current) return; // stale load
@@ -102,7 +104,7 @@ export function useMessages(groupChatId: number | null) {
         persistLastReadId(groupChatId, last.id);
       }
     };
-  }, [groupChatId, loadMessages]);
+  }, [groupChatId, forumPostId, loadMessages]);
 
   /**
    * Fetch the page strictly older than the oldest loaded message and prepend
@@ -119,7 +121,7 @@ export function useMessages(groupChatId: number | null) {
       const older = await fetchMessages(groupChatId, MESSAGES_PAGE_SIZE, {
         sentAt: oldest.sent_at,
         id: oldest.id,
-      });
+      }, forumPostId);
       if (older.length === 0) {
         setHasMore(false);
       } else {
@@ -132,7 +134,7 @@ export function useMessages(groupChatId: number | null) {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [groupChatId, messages]);
+  }, [groupChatId, forumPostId, messages]);
 
   const tempIdRef = useRef(0);
 
@@ -166,6 +168,8 @@ export function useMessages(groupChatId: number | null) {
   const handleWSMessage = useCallback(
     (msg: WSMessage) => {
       if (msg.groupChatId !== groupChatId) return;
+      // Filter by forumPostId: only accept messages scoped to the same thread.
+      if ((msg.forumPostId ?? null) !== (forumPostId ?? null)) return;
 
       if (msg.type === "editMessage" && msg.messageId !== undefined) {
         applyEdit(msg.messageId, msg.messageText ?? "", msg.editedAt ?? "");
@@ -181,6 +185,18 @@ export function useMessages(groupChatId: number | null) {
       }
       if (msg.type === "renameRoom" && msg.groupChatId === groupChatId) {
         if (msg.name) setGcName(msg.name);
+        return;
+      }
+      if (msg.type === "pinMessage" && msg.messageId !== undefined) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msg.messageId ? { ...m, pinned: 1 } : m))
+        );
+        return;
+      }
+      if (msg.type === "unpinMessage" && msg.messageId !== undefined) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msg.messageId ? { ...m, pinned: 0 } : m))
+        );
         return;
       }
       if (msg.type !== "message") return;
@@ -204,13 +220,15 @@ export function useMessages(groupChatId: number | null) {
         reply_quote: msg.replyQuote ?? null,
         reply_author: msg.replyAuthor ?? null,
         reactions: [],
+        pinned: null,
+        forum_post_id: msg.forumPostId ?? null,
         sent_at: msg.timestamp ?? new Date().toISOString(),
       };
 
       setMessages((prev) => [...prev, newMsg]);
       setError("");
     },
-    [groupChatId, applyEdit, applyDelete, applyReactions]
+    [groupChatId, forumPostId, applyEdit, applyDelete, applyReactions]
   );
 
   /** Edit one of your own messages, then reflect the change locally. */
@@ -231,6 +249,22 @@ export function useMessages(groupChatId: number | null) {
     applyReactions(messageId, reactions);
   }, [applyReactions]);
 
+  /** Pin a message (staff only), reflect locally. */
+  const pinMessage = useCallback(async (messageId: number) => {
+    await pinMessageRequest(messageId);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, pinned: 1 } : m))
+    );
+  }, []);
+
+  /** Unpin a message (staff only), reflect locally. */
+  const unpinMessage = useCallback(async (messageId: number) => {
+    await unpinMessageRequest(messageId);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, pinned: 0 } : m))
+    );
+  }, []);
+
   return {
     messages,
     gcName,
@@ -245,6 +279,8 @@ export function useMessages(groupChatId: number | null) {
     editMessage,
     deleteMessage,
     toggleReaction,
+    pinMessage,
+    unpinMessage,
     lastReadId,
     markAllRead,
   };
