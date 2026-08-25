@@ -19,6 +19,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [isTransparent, setIsTransparent] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  const [isForum, setIsForum] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,6 +44,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
         isAnonymous,
         isTransparent,
         isPublic,
+        isForum,
       });
       saveGC(gcId, name.trim());
       setId("");
@@ -53,6 +55,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
       setIsAnonymous(false);
       setIsTransparent(false);
       setIsPublic(false);
+      setIsForum(false);
       setIsOpen(false);
       onCreated(gcId);
     } catch (err) {
@@ -113,6 +116,7 @@ export default function CreateGroupChat({ onCreated }: Props) {
             className="w-full border border-[var(--border-primary)] px-2 py-1.5 bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
           />
           <div className="flex items-center gap-1.5 flex-wrap">
+            {toggle("forum", isForum, setIsForum)}
             {toggle("hidden", isHidden, setIsHidden)}
             {toggle("readonly", isReadonly, setIsReadonly)}
             {toggle("anonymous", isAnonymous, setIsAnonymous)}
