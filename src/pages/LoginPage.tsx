@@ -47,6 +47,11 @@ export default function LoginPage() {
             {error}
           </div>
         )}
+        <div className="border border-[var(--warning,#b58900)]/40 bg-[var(--warning,#b58900)]/10 px-2.5 py-2 text-[var(--warning,#b58900)] text-[11px] leading-relaxed">
+          This app is still in beta and going through rapid server-side changes.
+          Your login data may be gone — just register again for now.
+          You can create any number of accounts.
+        </div>
         <label className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">
           username
         </label>
