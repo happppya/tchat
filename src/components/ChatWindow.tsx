@@ -4,11 +4,23 @@ import { groupMessages, messagePreview, isoDate, formatDay } from "../utils/form
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
 import PinnedMessages from "./PinnedMessages";
+import MutedUsersPanel from "./MutedUsersPanel";
+import BannedUsersPanel from "./BannedUsersPanel";
 
 interface Props {
   messages: Message[];
   gcName: string;
   error: string;
+  /** Transient success message (e.g. "Muted bob") shown as a muted banner. */
+  notice?: string;
+  /** Called when the user dismisses the notice banner. */
+  onClearNotice?: () => void;
+  /** Room id for staff tools like the muted/banned-users panels. */
+  roomId?: number;
+  /** Unmute a user from the muted-users panel (staff only). */
+  onUnmuteUser?: (username: string) => void | Promise<void>;
+  /** Unban a user from the banned-users panel (staff only). */
+  onUnbanUser?: (username: string) => void | Promise<void>;
   /** Whether the current user created this room and may delete it. */
   isOwner: boolean;
   /** Whether the viewer is a room owner, mod, or admin. */
@@ -60,6 +72,11 @@ export default function ChatWindow({
   messages,
   gcName,
   error,
+  notice,
+  onClearNotice,
+  roomId,
+  onUnmuteUser,
+  onUnbanUser,
   isOwner,
   viewerIsStaff,
   viewerIsAdmin,
@@ -288,6 +305,12 @@ export default function ChatWindow({
         </span>
         <span className="ml-auto flex items-center gap-2">
           <PinnedMessages messages={messages} onJumpToMessage={onJumpToMessage} />
+          {viewerIsStaff && roomId !== undefined && onUnmuteUser && (
+            <MutedUsersPanel roomId={roomId} onUnmuteUser={onUnmuteUser} />
+          )}
+          {viewerIsStaff && roomId !== undefined && onUnbanUser && (
+            <BannedUsersPanel roomId={roomId} onUnbanUser={onUnbanUser} />
+          )}
           {!hideRoomActions && (
             <>
               <button
@@ -313,6 +336,22 @@ export default function ChatWindow({
           <span className="cursor-block !h-3 !w-2" />
         </span>
       </div>
+
+      {/* Success/notice banner (e.g. moderation command results) */}
+      {notice && (
+        <div className="flex items-center gap-2 border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-3 py-1.5 text-[var(--accent-light)] text-sm my-1">
+          <span className="flex-1">{notice}</span>
+          {onClearNotice && (
+            <button
+              onClick={onClearNotice}
+              className="shrink-0 text-[var(--accent-light)] text-xs border border-[var(--accent)]/40 px-1.5 py-0.5 bg-transparent cursor-pointer hover:bg-[var(--accent)]/20 transition-colors"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (

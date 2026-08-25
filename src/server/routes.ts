@@ -34,6 +34,8 @@ import {
   isRoomBanned,
   isRoomMuted,
   isRoomMod,
+  getRoomMutedUsers,
+  getRoomBannedUsers,
   roomIsAnonymous,
   getAnonName,
   createGroupChat,
@@ -1155,12 +1157,19 @@ export function createRouter({
     const target = typeof targetUsername === 'string' ? targetUsername.trim() : '';
 
     if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
-    if (gcId === 0) return res.status(403).json({ error: 'Moderation commands are disabled in Room 0' });
     if (!cmd) return res.status(400).json({ error: 'Command is required' });
 
     const actorId = req.session!.userId;
     const isAdmin = await isSiteAdmin(db, actorId);
     const isStaff = await isRoomStaffOrAdmin(db, actorId, gcId);
+
+    // Room 0 (the lobby) has no owner or moderators, so only site admins may
+    // moderate it. Everyone else gets a clear error.
+    if (gcId === 0 && !isAdmin) {
+      return res
+        .status(403)
+        .json({ error: 'Only site admins can moderate Room 0 (the lobby)' });
+    }
 
     // Resolve the target user by username.
     let targetId: number | null = null;
@@ -1236,45 +1245,106 @@ export function createRouter({
         res.json({ message: `Unbanned ${target}` });
         break;
       }
-      case 'mute':
-      case 'unmute': {
-        const muted = await isRoomMuted(db, targetId, gcId);
-        if (muted) {
-          await db.run(
-            'DELETE FROM room_mutes WHERE room_id = ? AND user_id = ?',
-            [gcId, targetId]
-          );
-          res.json({ message: `Unmuted ${target}` });
-        } else {
-          await db.run(
-            'INSERT OR REPLACE INTO room_mutes (room_id, user_id, muted_by, muted_at) VALUES (?, ?, ?, ?)',
-            [gcId, targetId, actorId, sqliteNow()]
-          );
-          res.json({ message: `Muted ${target}` });
-        }
+      // mute/unmute are explicit and idempotent: `mute` always mutes and
+      // `unmute` always unmutes, so repeating a command can't silently undo
+      // the previous one.
+      case 'mute': {
+        await db.run(
+          'INSERT OR REPLACE INTO room_mutes (room_id, user_id, muted_by, muted_at) VALUES (?, ?, ?, ?)',
+          [gcId, targetId, actorId, sqliteNow()]
+        );
+        res.json({ message: `Muted ${target}` });
         break;
       }
-      case 'mod':
+      case 'unmute': {
+        await db.run(
+          'DELETE FROM room_mutes WHERE room_id = ? AND user_id = ?',
+          [gcId, targetId]
+        );
+        res.json({ message: `Unmuted ${target}` });
+        break;
+      }
+      // mod/demod are also explicit and idempotent.
+      case 'mod': {
+        await db.run(
+          'INSERT OR REPLACE INTO room_moderators (room_id, user_id, elevated_by, elevated_at) VALUES (?, ?, ?, ?)',
+          [gcId, targetId, actorId, sqliteNow()]
+        );
+        res.json({ message: `Promoted ${target} to moderator` });
+        break;
+      }
       case 'demod': {
-        const mod = await isRoomMod(db, targetId, gcId);
-        if (mod) {
-          await db.run(
-            'DELETE FROM room_moderators WHERE room_id = ? AND user_id = ?',
-            [gcId, targetId]
-          );
-          res.json({ message: `Demoted ${target} from moderator` });
-        } else {
-          await db.run(
-            'INSERT OR REPLACE INTO room_moderators (room_id, user_id, elevated_by, elevated_at) VALUES (?, ?, ?, ?)',
-            [gcId, targetId, actorId, sqliteNow()]
-          );
-          res.json({ message: `Promoted ${target} to moderator` });
-        }
+        await db.run(
+          'DELETE FROM room_moderators WHERE room_id = ? AND user_id = ?',
+          [gcId, targetId]
+        );
+        res.json({ message: `Demoted ${target} from moderator` });
         break;
       }
       default:
         return res.status(400).json({ error: `Unknown command: ${cmd}` });
     }
+  });
+
+  // Live mute/mod status of a user in a room, so the staff name context menu
+  // can show the correct action ("Mute" vs "Unmute", "Promote mod" vs
+  // "Demote mod") instead of guessing. Gated to staff, matching the menu.
+  router.get('/roomUserStatus', requireAuth, async (req: Request, res: Response) => {
+    const gcId = parseRoomCode(req.query.groupChatId);
+    const username =
+      typeof req.query.username === 'string' ? req.query.username.trim() : '';
+    if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
+    if (!username) return res.status(400).json({ error: 'Username is required' });
+
+    const actorId = req.session!.userId;
+    if (!(await isRoomStaffOrAdmin(db, actorId, gcId))) {
+      return res
+        .status(403)
+        .json({ error: 'Only room staff can view member status' });
+    }
+
+    const target = await db.get('SELECT id FROM users WHERE username = ?', [
+      username,
+    ]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    const [muted, isMod] = await Promise.all([
+      isRoomMuted(db, target.id, gcId),
+      isRoomMod(db, target.id, gcId),
+    ]);
+    res.json({ username, muted, isMod });
+  });
+
+  // Muted users in a room (staff only) — powers the mute-list panel.
+  router.get('/roomMutes', requireAuth, async (req: Request, res: Response) => {
+    const gcId = parseRoomCode(req.query.groupChatId);
+    if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
+
+    const actorId = req.session!.userId;
+    if (!(await isRoomStaffOrAdmin(db, actorId, gcId))) {
+      return res
+        .status(403)
+        .json({ error: 'Only room staff can view muted users' });
+    }
+
+    const mutes = await getRoomMutedUsers(db, gcId);
+    res.json({ mutes });
+  });
+
+  // Banned users in a room (staff only) — powers the ban-list panel.
+  router.get('/roomBans', requireAuth, async (req: Request, res: Response) => {
+    const gcId = parseRoomCode(req.query.groupChatId);
+    if (gcId === null) return res.status(400).json({ error: 'Invalid room code' });
+
+    const actorId = req.session!.userId;
+    if (!(await isRoomStaffOrAdmin(db, actorId, gcId))) {
+      return res
+        .status(403)
+        .json({ error: 'Only room staff can view banned users' });
+    }
+
+    const bans = await getRoomBannedUsers(db, gcId);
+    res.json({ bans });
   });
 
   // -------------------------------------------------------------------------

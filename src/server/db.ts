@@ -1017,6 +1017,36 @@ export async function isRoomMuted(
   return row !== undefined;
 }
 
+/** List muted users in a room (newest mute first), for the mute-list panel. */
+export async function getRoomMutedUsers(
+  db: DB,
+  roomId: number
+): Promise<Array<{ user_id: number; username: string; muted_at: string }>> {
+  return db.all(
+    `SELECT rm.user_id, u.username, rm.muted_at
+     FROM room_mutes rm
+     JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = ?
+     ORDER BY rm.muted_at DESC`,
+    [roomId]
+  );
+}
+
+/** List banned users in a room (newest ban first), for the ban-list panel. */
+export async function getRoomBannedUsers(
+  db: DB,
+  roomId: number
+): Promise<Array<{ user_id: number; username: string; banned_at: string }>> {
+  return db.all(
+    `SELECT rb.user_id, u.username, rb.banned_at
+     FROM room_bans rb
+     JOIN users u ON u.id = rb.user_id
+     WHERE rb.room_id = ?
+     ORDER BY rb.banned_at DESC`,
+    [roomId]
+  );
+}
+
 /** Whether the room is flagged as readonly. */
 export async function roomIsReadonly(
   db: DB,

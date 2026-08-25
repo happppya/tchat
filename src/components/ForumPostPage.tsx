@@ -285,6 +285,9 @@ export default function ForumPostPage({
         onSlashCommand={() => {}}
         onJoinRoom={onJoinRoom}
         onModAction={onModAction}
+        onUnmuteUser={(username) => onModAction(username, "unmute")}
+        onUnbanUser={(username) => onModAction(username, "unban")}
+        roomId={groupChatId}
         onRenameRoom={onRenameRoom}
         roomTypeNames={roomTypeNames}
         currentUserId={currentUserId}

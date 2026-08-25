@@ -124,7 +124,10 @@ The backend is TypeScript compiled to CommonJS into `dist-server/` via
 | PUT    | `/api/editMessage`           | yes  | Edit own message (admin can edit any)        |
 | DELETE | `/api/deleteMessage`         | yes  | Delete own message (admin can delete any)    |
 | POST   | `/api/reactToMessage`        | yes  | Toggle emoji reaction                        |
-| POST   | `/api/roomCommand`           | yes  | Moderation: `kick`, `ban`, `unban`, `mute`, `unmute`, `mod`, `demod` with `targetUsername` |
+| POST   | `/api/roomCommand`           | yes  | Moderation: `kick`, `ban`, `unban`, `mute`, `unmute`, `mod`, `demod` with `targetUsername` (site admins may moderate Room 0; commands are idempotent) |
+| GET    | `/api/roomUserStatus`        | yes  | Live `muted`/`isMod` status of a user in a room (staff only), for the name context menu |
+| GET    | `/api/roomMutes`             | yes  | List muted users in a room (staff only), for the mute-list panel |
+| GET    | `/api/roomBans`              | yes  | List banned users in a room (staff only), for the ban-list panel |
 | POST   | `/api/upload`                | yes  | Upload a small file (base64 data URL)        |
 | GET    | `/api/searchGifs`            | yes  | GIPHY search                                 |
 | GET    | `/api/boardGroups`           | yes  | Board groups with room ids                   |

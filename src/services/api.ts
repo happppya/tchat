@@ -404,6 +404,51 @@ export async function roomCommand(
   );
 }
 
+/** Live mute/mod status of a user in a room (for the staff name menu). */
+export async function fetchRoomUserStatus(
+  groupChatId: number,
+  username: string
+): Promise<{ muted: boolean; isMod: boolean }> {
+  const s = await request<{ username: string; muted: boolean; isMod: boolean }>(
+    `/roomUserStatus?groupChatId=${groupChatId}&username=${encodeURIComponent(username)}`
+  );
+  return { muted: s.muted, isMod: s.isMod };
+}
+
+/** A muted user in a room, as returned by /roomMutes. */
+export interface RoomMuteEntry {
+  user_id: number;
+  username: string;
+  muted_at: string;
+}
+
+/** List muted users in a room (staff only). */
+export async function fetchRoomMutes(
+  groupChatId: number
+): Promise<RoomMuteEntry[]> {
+  const res = await request<{ mutes: RoomMuteEntry[] }>(
+    `/roomMutes?groupChatId=${groupChatId}`
+  );
+  return res.mutes;
+}
+
+/** A banned user in a room, as returned by /roomBans. */
+export interface RoomBanEntry {
+  user_id: number;
+  username: string;
+  banned_at: string;
+}
+
+/** List banned users in a room (staff only). */
+export async function fetchRoomBans(
+  groupChatId: number
+): Promise<RoomBanEntry[]> {
+  const res = await request<{ bans: RoomBanEntry[] }>(
+    `/roomBans?groupChatId=${groupChatId}`
+  );
+  return res.bans;
+}
+
 // ---------------------------------------------------------------------------
 // Board groups — admin-only mutations, anyone can read
 // ---------------------------------------------------------------------------

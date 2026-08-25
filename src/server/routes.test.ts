@@ -332,3 +332,296 @@ describe("upload abuse limits", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("moderation commands — mute", () => {
+  const roomId = 777777;
+
+  const bobMuted = async () =>
+    db.get(
+      "SELECT 1 AS present FROM room_mutes WHERE room_id = ? AND user_id = (SELECT id FROM users WHERE username = 'bob')",
+      [roomId]
+    );
+
+  beforeAll(async () => {
+    await db.run("INSERT INTO group_chats (id, name) VALUES (?, 'Mod room')", [
+      roomId,
+    ]);
+    await db.run(
+      "INSERT INTO room_members (user_id, room_id) SELECT id, ? FROM users WHERE username IN ('alice', 'bob')",
+      [roomId]
+    );
+    // alice is a site admin for these tests.
+    await db.run("UPDATE users SET is_admin = 1 WHERE username = 'alice'");
+  });
+
+  afterAll(async () => {
+    await db.run("UPDATE users SET is_admin = 0 WHERE username = 'alice'");
+    await db.run("DELETE FROM room_mutes");
+    await db.run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM group_chats WHERE id = ?", [roomId]);
+  });
+
+  it("mutes a user in a normal room", async () => {
+    const res = await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "mute",
+      targetUsername: "bob",
+    });
+    expect(res.status).toBe(200);
+    expect(await bobMuted()).toBeTruthy();
+  });
+
+  it("mute is idempotent — muting again keeps the user muted", async () => {
+    const res = await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "mute",
+      targetUsername: "bob",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe("Muted bob");
+    expect(await bobMuted()).toBeTruthy();
+  });
+
+  it("unmute removes the mute", async () => {
+    const res = await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "unmute",
+      targetUsername: "bob",
+    });
+    expect(res.status).toBe(200);
+    expect(await bobMuted()).toBeUndefined();
+  });
+
+  it("site admins can mute in Room 0 (the lobby)", async () => {
+    const res = await request("POST", "/roomCommand", {
+      groupChatId: 0,
+      command: "mute",
+      targetUsername: "bob",
+    });
+    expect(res.status).toBe(200);
+    const row = await db.get(
+      "SELECT 1 AS present FROM room_mutes WHERE room_id = 0 AND user_id = (SELECT id FROM users WHERE username = 'bob')"
+    );
+    expect(row).toBeTruthy();
+    await db.run("DELETE FROM room_mutes WHERE room_id = 0");
+  });
+
+  it("non-admins cannot moderate Room 0", async () => {
+    const res = await request(
+      "POST",
+      "/roomCommand",
+      { groupChatId: 0, command: "mute", targetUsername: "alice" },
+      "bob"
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("room user status endpoint", () => {
+  const roomId = 777778;
+
+  const getStatus = (as = "alice") =>
+    request(
+      "GET",
+      `/roomUserStatus?groupChatId=${roomId}&username=bob`,
+      undefined,
+      as
+    );
+
+  beforeAll(async () => {
+    await db.run("INSERT INTO group_chats (id, name) VALUES (?, 'Status room')", [
+      roomId,
+    ]);
+    await db.run(
+      "INSERT INTO room_members (user_id, room_id) SELECT id, ? FROM users WHERE username IN ('alice', 'bob')",
+      [roomId]
+    );
+    await db.run("UPDATE users SET is_admin = 1 WHERE username = 'alice'");
+  });
+
+  afterAll(async () => {
+    await db.run("UPDATE users SET is_admin = 0 WHERE username = 'alice'");
+    await db.run("DELETE FROM room_moderators WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM room_mutes WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM group_chats WHERE id = ?", [roomId]);
+  });
+
+  it("returns muted=false and isMod=false for a plain member", async () => {
+    const res = await getStatus();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      username: "bob",
+      muted: false,
+      isMod: false,
+    });
+  });
+
+  it("reflects a mute", async () => {
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "mute",
+      targetUsername: "bob",
+    });
+    const res = await getStatus();
+    const body = (await res.json()) as { muted: boolean };
+    expect(body.muted).toBe(true);
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "unmute",
+      targetUsername: "bob",
+    });
+  });
+
+  it("reflects moderator status", async () => {
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "mod",
+      targetUsername: "bob",
+    });
+    const res = await getStatus();
+    const body = (await res.json()) as { isMod: boolean };
+    expect(body.isMod).toBe(true);
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "demod",
+      targetUsername: "bob",
+    });
+  });
+
+  it("is gated to room staff", async () => {
+    const res = await getStatus("bob");
+    expect(res.status).toBe(403);
+  });
+
+  it("404s for unknown users", async () => {
+    const res = await request(
+      "GET",
+      `/roomUserStatus?groupChatId=${roomId}&username=ghost`
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("room mutes endpoint", () => {
+  const roomId = 777779;
+
+  const listMutes = (as = "alice") =>
+    request("GET", `/roomMutes?groupChatId=${roomId}`, undefined, as);
+
+  beforeAll(async () => {
+    await db.run("INSERT INTO group_chats (id, name) VALUES (?, 'Mutes room')", [
+      roomId,
+    ]);
+    await db.run(
+      "INSERT INTO room_members (user_id, room_id) SELECT id, ? FROM users WHERE username IN ('alice', 'bob')",
+      [roomId]
+    );
+    await db.run("UPDATE users SET is_admin = 1 WHERE username = 'alice'");
+  });
+
+  afterAll(async () => {
+    await db.run("UPDATE users SET is_admin = 0 WHERE username = 'alice'");
+    await db.run("DELETE FROM room_mutes WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM group_chats WHERE id = ?", [roomId]);
+  });
+
+  it("returns an empty list when nobody is muted", async () => {
+    const res = await listMutes();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mutes: unknown[] };
+    expect(body.mutes).toEqual([]);
+  });
+
+  it("lists muted users after a mute, then clears after unmute", async () => {
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "mute",
+      targetUsername: "bob",
+    });
+
+    const res = await listMutes();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      mutes: Array<{ username: string }>;
+    };
+    expect(body.mutes).toHaveLength(1);
+    expect(body.mutes[0].username).toBe("bob");
+
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "unmute",
+      targetUsername: "bob",
+    });
+    const after = (await (await listMutes()).json()) as { mutes: unknown[] };
+    expect(after.mutes).toEqual([]);
+  });
+
+  it("is gated to room staff", async () => {
+    const res = await listMutes("bob");
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("room bans endpoint", () => {
+  const roomId = 777780;
+
+  const listBans = (as = "alice") =>
+    request("GET", `/roomBans?groupChatId=${roomId}`, undefined, as);
+
+  beforeAll(async () => {
+    await db.run("INSERT INTO group_chats (id, name) VALUES (?, 'Bans room')", [
+      roomId,
+    ]);
+    await db.run(
+      "INSERT INTO room_members (user_id, room_id) SELECT id, ? FROM users WHERE username IN ('alice', 'bob')",
+      [roomId]
+    );
+    await db.run("UPDATE users SET is_admin = 1 WHERE username = 'alice'");
+  });
+
+  afterAll(async () => {
+    await db.run("UPDATE users SET is_admin = 0 WHERE username = 'alice'");
+    await db.run("DELETE FROM room_bans WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
+    await db.run("DELETE FROM group_chats WHERE id = ?", [roomId]);
+  });
+
+  it("returns an empty list when nobody is banned", async () => {
+    const res = await listBans();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { bans: unknown[] };
+    expect(body.bans).toEqual([]);
+  });
+
+  it("lists banned users after a ban, then clears after unban", async () => {
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "ban",
+      targetUsername: "bob",
+    });
+
+    const res = await listBans();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      bans: Array<{ username: string }>;
+    };
+    expect(body.bans).toHaveLength(1);
+    expect(body.bans[0].username).toBe("bob");
+
+    await request("POST", "/roomCommand", {
+      groupChatId: roomId,
+      command: "unban",
+      targetUsername: "bob",
+    });
+    const after = (await (await listBans()).json()) as { bans: unknown[] };
+    expect(after.bans).toEqual([]);
+  });
+
+  it("is gated to room staff", async () => {
+    const res = await listBans("bob");
+    expect(res.status).toBe(403);
+  });
+});

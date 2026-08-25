@@ -38,6 +38,7 @@ export default function ChatPage() {
   const navigate = useNavigate();
   const { user, logout, persistWarning } = useAuth();
   const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
   const [wsError, setWsError] = useState("");
 
   // ---- Notifications ----
@@ -116,8 +117,12 @@ export default function ChatPage() {
     [user?.username]
   );
 
-  // Clear WS error when changing rooms.
-  useEffect(() => { setWsError(""); }, [activeGCId]);
+  // Clear transient banners when changing rooms.
+  useEffect(() => {
+    setWsError("");
+    setActionError("");
+    setActionNotice("");
+  }, [activeGCId]);
 
   const {
     messages,
@@ -376,8 +381,10 @@ export default function ChatPage() {
       try {
         const res = await roomCommand(activeGCId, command, arg);
         setActionError("");
+        setActionNotice(res.message);
         console.log("[roomCommand]", res.message);
       } catch (err) {
+        setActionNotice("");
         setActionError(errorMessage(err, `Command failed: ${command}`));
       }
     },
@@ -391,8 +398,11 @@ export default function ChatPage() {
       setActionError("");
       try {
         const res = await roomCommand(activeGCId, command, target);
+        setActionError("");
+        setActionNotice(res.message);
         console.log(`[${command}]`, res.message);
       } catch (err) {
+        setActionNotice("");
         setActionError(errorMessage(err, `${command} failed`));
       }
     },
@@ -411,6 +421,23 @@ export default function ChatPage() {
   const handleModAction = useCallback(
     (username: string, action: string) => {
       void runRoomCommand(action, username);
+    },
+    [runRoomCommand]
+  );
+
+  // One-click unmute from the muted-users panel. Awaits the server so the
+  // panel can refresh its list afterwards.
+  const handleUnmuteUser = useCallback(
+    async (username: string) => {
+      await runRoomCommand("unmute", username);
+    },
+    [runRoomCommand]
+  );
+
+  // One-click unban from the banned-users panel.
+  const handleUnbanUser = useCallback(
+    async (username: string) => {
+      await runRoomCommand("unban", username);
     },
     [runRoomCommand]
   );
@@ -685,6 +712,11 @@ export default function ChatPage() {
             hasMore={hasMore}
             loadingOlder={loadingOlder}
             error={error || actionError || wsError}
+            notice={actionNotice}
+            onClearNotice={() => setActionNotice("")}
+            roomId={activeGCId ?? 0}
+            onUnmuteUser={handleUnmuteUser}
+            onUnbanUser={handleUnbanUser}
             onSendMessage={handleSendMessage}
             onDeleteRoom={handleDeleteRoom}
             onLeaveRoom={handleLeaveRoom}

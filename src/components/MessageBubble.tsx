@@ -3,6 +3,7 @@ import type { Message, Reaction } from "../types";
 import type { MessageGroup } from "../utils/format";
 import { formatGroupTime } from "../utils/format";
 import { MAX_MESSAGE_LENGTH } from "../constants";
+import { fetchRoomUserStatus } from "../services/api";
 import Avatar from "./Avatar";
 import Markdown from "./Markdown";
 
@@ -57,6 +58,27 @@ export default function MessageBubble({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [nameMenuOpen, setNameMenuOpen] = useState(false);
+  // Live mute/mod status of the author in this room, for the staff menu.
+  // Defaults to the "not muted / not mod" state; a failed fetch keeps the
+  // defaults (the commands are idempotent, so a wrong label is harmless).
+  const [memberStatus, setMemberStatus] = useState<{
+    muted: boolean;
+    isMod: boolean;
+  }>({ muted: false, isMod: false });
+
+  const targetUsername = group.username ?? group.displayName;
+  const roomId = group.messages[0]?.group_chat_id ?? 0;
+
+  const toggleNameMenu = () => {
+    setNameMenuOpen((p) => !p);
+    if (viewerIsStaff) {
+      void fetchRoomUserStatus(roomId, targetUsername)
+        .then((s) => setMemberStatus({ muted: s.muted, isMod: s.isMod }))
+        .catch(() => {
+          // Keep defaults.
+        });
+    }
+  };
 
   const startEdit = (message: Message) => {
     setEditingId(message.id);
@@ -103,7 +125,7 @@ export default function MessageBubble({
           </span>
         ) : (
           <button
-            onClick={() => setNameMenuOpen((p) => !p)}
+            onClick={toggleNameMenu}
             data-testid="message-author"
             title={`${group.displayName} — click for actions`}
             className="flex items-center gap-1.5 p-0 border-none bg-transparent cursor-pointer text-left"
@@ -143,31 +165,37 @@ export default function MessageBubble({
                     key={action}
                     onClick={() => {
                       setNameMenuOpen(false);
-                      onModAction(group.username ?? group.displayName, action);
+                      onModAction(targetUsername, action);
                     }}
                     className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
                   >
                     {label}
                   </button>
                 ))}
-                <StaffToggleButton
-                  labelOn="Unmute"
-                  labelOff="Mute"
-                  actionOn="unmute"
-                  actionOff="mute"
-                  displayName={group.username ?? group.displayName}
-                  onModAction={onModAction}
-                  closeMenu={() => setNameMenuOpen(false)}
-                />
-                <StaffToggleButton
-                  labelOn="Demote mod"
-                  labelOff="Promote mod"
-                  actionOn="demod"
-                  actionOff="mod"
-                  displayName={group.username ?? group.displayName}
-                  onModAction={onModAction}
-                  closeMenu={() => setNameMenuOpen(false)}
-                />
+                <button
+                  onClick={() => {
+                    setNameMenuOpen(false);
+                    onModAction(
+                      targetUsername,
+                      memberStatus.muted ? "unmute" : "mute"
+                    );
+                  }}
+                  className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
+                >
+                  {memberStatus.muted ? "Unmute" : "Mute"}
+                </button>
+                <button
+                  onClick={() => {
+                    setNameMenuOpen(false);
+                    onModAction(
+                      targetUsername,
+                      memberStatus.isMod ? "demod" : "mod"
+                    );
+                  }}
+                  className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
+                >
+                  {memberStatus.isMod ? "Demote mod" : "Promote mod"}
+                </button>
               </>
             )}
           </div>
@@ -493,36 +521,3 @@ function ActionButton({
   );
 }
 
-interface ToggleButtonProps {
-  labelOn: string;
-  labelOff: string;
-  actionOn: string;
-  actionOff: string;
-  displayName: string;
-  onModAction: (username: string, action: string) => void;
-  closeMenu: () => void;
-}
-
-function StaffToggleButton({
-  labelOn,
-  labelOff,
-  actionOn,
-  actionOff,
-  displayName,
-  onModAction,
-  closeMenu,
-}: ToggleButtonProps) {
-  const [on, setOn] = useState(false);
-  return (
-    <button
-      onClick={() => {
-        closeMenu();
-        setOn((p) => !p);
-        onModAction(displayName, on ? actionOn : actionOff);
-      }}
-      className="px-2 py-1 text-left hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-none bg-transparent"
-    >
-      {on ? labelOn : labelOff}
-    </button>
-  );
-}
