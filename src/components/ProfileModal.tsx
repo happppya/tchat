@@ -139,7 +139,7 @@ export default function ProfileModal({
             </div>
             <div
               data-testid="profile-bio"
-              className="text-[var(--text-secondary)] text-sm whitespace-pre-wrap break-words"
+              className="text-[var(--text-secondary)] text-sm whitespace-pre-wrap wrap-anywhere min-w-0"
             >
               {profile.bio || "no bio yet"}
             </div>

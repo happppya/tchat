@@ -4,7 +4,7 @@ interface Props {
 
 export default function ChangelogPage({ onClose }: Props) {
   return (
-    <div className="flex-1 flex items-center justify-center p-4">
+    <div className="flex-1 min-w-0 flex items-center justify-center p-4">
       <div className="term-panel border border-[var(--border-primary)] max-w-2xl w-full p-6 text-sm overflow-y-auto max-h-full">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[var(--accent)] text-lg font-semibold tracking-wide glow">changelog</h2>

@@ -5,7 +5,7 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import { openDatabase, type DB } from "./db";
 import { createRealtime, attachMessageHandler } from "./realtime";
-import { MAX_WS_FRAME_BYTES } from "./constants";
+import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from "./constants";
 import type { Session } from "./auth";
 
 /**
@@ -168,6 +168,39 @@ describe("broadcast scoping + send authorization", () => {
       "SELECT COUNT(*) AS count FROM messages WHERE group_chat_id = 555"
     );
     expect(row.count).toBe(0);
+  });
+
+  it("rejects messages over MAX_MESSAGE_LENGTH with an error frame", async () => {
+    const alice = await connect(ALICE);
+    alice.send(
+      JSON.stringify({
+        type: "message",
+        groupChatId: 555,
+        messageText: "x".repeat(MAX_MESSAGE_LENGTH + 1),
+      })
+    );
+    const errFrame = await nextFrame(alice);
+    expect(errFrame.type).toBe("error");
+    expect(errFrame.messageText).toContain("250");
+
+    const row = await db.get(
+      "SELECT COUNT(*) AS count FROM messages WHERE group_chat_id = 555"
+    );
+    expect(row.count).toBe(0);
+  });
+
+  it("accepts a message at exactly MAX_MESSAGE_LENGTH", async () => {
+    const alice = await connect(ALICE);
+    alice.send(
+      JSON.stringify({
+        type: "message",
+        groupChatId: 555,
+        messageText: "y".repeat(MAX_MESSAGE_LENGTH),
+      })
+    );
+    const echo = await nextFrame(alice);
+    expect(echo.type).toBe("message");
+    expect(echo.messageText).toHaveLength(250);
   });
 
   it("still delivers to every member of the room", async () => {

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   uniqueGcId,
   resetApp,
-  signUp,
+  signUpAdmin,
   createGroupChat,
   sendMessage,
 } from "./helpers";
@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
 
 test("replying to a message shows a quote", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Reply Room");
   await sendMessage(page, "original message");
 
@@ -40,13 +40,15 @@ test("replying to a message shows a quote", async ({ page }) => {
     "original message"
   );
 
-  // The quote is denormalized on the row so it survives reloads.
+  // The quote is denormalized on the row so it survives reloads. The server
+  // prefixes replies with "@<author> " so the target gets pinged.
   const res = await page.request.get(
     `/api/getMessages?groupChatId=${id}&limit=50`
   );
   const msgs = await res.json();
   const reply = msgs.find(
-    (m: { message_text: string | null }) => m.message_text === "my reply"
+    (m: { message_text: string | null }) =>
+      typeof m.message_text === "string" && m.message_text.includes("my reply")
   );
   expect(reply).toBeTruthy();
   expect(reply.reply_quote).toBe("original message");
@@ -55,7 +57,7 @@ test("replying to a message shows a quote", async ({ page }) => {
 
 test("reacting to a message toggles an emoji", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "React Room");
   await sendMessage(page, "react to me");
 
@@ -74,7 +76,7 @@ test("reacting to a message toggles an emoji", async ({ page }) => {
 
 test("message actions are hidden until you hover the message", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Hover Room");
   await sendMessage(page, "hover target");
 
@@ -90,7 +92,7 @@ test("message actions are hidden until you hover the message", async ({ page }) 
 
 test("hovering an action icon shows its tooltip", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Tooltip Room");
   await sendMessage(page, "tooltip target");
 

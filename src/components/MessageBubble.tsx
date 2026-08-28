@@ -105,7 +105,7 @@ export default function MessageBubble({
   return (
     <div
       data-testid="message-bubble"
-      className={`px-1 py-1 leading-relaxed ${
+      className={`px-1 py-1 leading-relaxed min-w-0 ${
         hasPinned ? "bg-[var(--accent)]/5 border-l-2 border-[var(--accent)]/40" : ""
       }`}
     >
@@ -335,7 +335,7 @@ function MessageLine({
         {(message.reply_quote || message.reply_author) && (
           <div
             data-testid="message-reply"
-            className="border-l-2 border-[var(--border-primary)] pl-2 text-xs text-[var(--text-muted)] max-w-[560px]"
+            className="border-l-2 border-[var(--border-primary)] pl-2 text-xs text-[var(--text-muted)] max-w-[560px] min-w-0 wrap-anywhere"
           >
             <span className="text-[var(--accent-light)]">
               ↪ {message.reply_author || "unknown"}:

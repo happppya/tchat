@@ -23,7 +23,10 @@ export default defineConfig({
       // serves a half-built dist/, producing wrong MIME types / 404s for the
       // JS/CSS assets (the app never mounts).
       command:
-        "npm run build && npm run build:server && cross-env DATABASE_PATH=./test-database.db PORT=3000 EMPTY_ROOM_TTL_MS=2000 CLEANUP_INTERVAL_MS=500 RATE_LIMIT_AUTH_MAX=5000 RATE_LIMIT_UPLOAD_MAX=5000 RATE_LIMIT_GIF_MAX=5000 node dist-server/server.js",
+        // VITE_API_URL= (empty) overrides any ambient .env value so the built
+        // bundle talks same-origin /api + /ws to the local test server instead
+        // of a production backend (e.g. when .env points at the Cloud Run API).
+        "cross-env VITE_API_URL= npm run build && npm run build:server && cross-env DATABASE_PATH=./test-database.db PORT=3000 EMPTY_ROOM_TTL_MS=2000 CLEANUP_INTERVAL_MS=500 RATE_LIMIT_AUTH_MAX=5000 RATE_LIMIT_UPLOAD_MAX=5000 RATE_LIMIT_GIF_MAX=5000 node dist-server/server.js",
       url: "http://127.0.0.1:3000/api/health",
       // PORT=3000 is set explicitly so an ambient PORT (e.g. PORT=0 leaked into
       // the shell) doesn't make the server bind a random port.

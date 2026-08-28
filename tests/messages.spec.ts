@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { uniqueGcId, resetApp, signUp, createGroupChat } from "./helpers";
+import { uniqueGcId, resetApp, signUpAdmin, createGroupChat } from "./helpers";
 
 /**
  * Rich-message tests: markdown, fenced code blocks, and small file uploads.
@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 
 test("fenced code blocks render as code", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Code Room");
 
   await page.fill(
@@ -32,7 +32,7 @@ test("fenced code blocks render as code", async ({ page }) => {
 
 test("markdown renders bold, inline code, and links", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Markdown Room");
 
   await page.fill(
@@ -50,7 +50,7 @@ test("markdown renders bold, inline code, and links", async ({ page }) => {
 
 test("small files upload and appear as attachments", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Files Room");
 
   await page.setInputFiles('[data-testid="file-input"]', {

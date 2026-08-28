@@ -65,12 +65,13 @@ export function isAllowedWsOrigin(origin: string | undefined): boolean {
   return FRONTEND_ORIGINS.includes(origin);
 }
 
-// Text messages can carry markdown/code blocks, so allow a roomier body than
-// the old 300-char cap. Files are capped separately to protect the disk.
-export const MAX_MESSAGE_LENGTH = 4000;
+// Hard cap on message text (mirrored client-side in src/constants.ts). Kept
+// small so a single client can't flood a room with giant bodies. Files are
+// capped separately to protect the disk.
+export const MAX_MESSAGE_LENGTH = 250;
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MB
 
-// WebSocket frames are tiny (≤4000-char text + metadata). Capping the frame
+// WebSocket frames are tiny (≤250-char text + metadata). Capping the frame
 // size keeps one malicious client from making the server buffer ~100 MiB
 // frames (the ws library's default maxPayload) and rebroadcasting them.
 export const MAX_WS_FRAME_BYTES = 64 * 1024;

@@ -161,7 +161,7 @@ export default function ForumPostPage({
   }
 
   return (
-    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0">
+    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0 min-w-0">
       {/* Post header bar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <button

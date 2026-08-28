@@ -224,9 +224,14 @@ export default function ChatWindow({
 
     if (unreadGroupIndex >= 0) {
       const bar = el.querySelector('[data-testid="unread-bar"]');
-      if (bar) bar.scrollIntoView({ block: "start" });
+      if (bar) bar.scrollIntoView({ block: "start", inline: "nearest" });
     } else {
-      messagesEndRef.current?.scrollIntoView();
+      // Scroll the list itself — never scrollIntoView() on a child here.
+      // scrollIntoView walks up and scrolls EVERY scrollable ancestor,
+      // including overflow:hidden ones (script-scrollable!). A wide message
+      // in the room made #root.scrollLeft nonzero, dragging the whole app
+      // row (sidebar first) out of view left on room entry.
+      el.scrollTo({ top: el.scrollHeight });
     }
     scrolledToUnreadRef.current = true;
   }, [groups, lastReadId, unreadGroupIndex]);
@@ -238,18 +243,23 @@ export default function ChatWindow({
       const delta = el.scrollHeight - scrollAnchorRef.current;
       el.scrollTop += delta;
       shouldRestoreScrollRef.current = false;
-    } else if (stickToBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (stickToBottomRef.current && el) {
+      // Same as above: scroll the list directly, not scrollIntoView(), so a
+      // wide message can never shift the app shell horizontally.
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
   }, [messages]);
 
   const scrollToBottom = useCallback(() => {
     stickToBottomRef.current = true;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, []);
 
   return (
-    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0 relative">
+    <div className="flex flex-col flex-1 m-1 ml-0 min-h-0 min-w-0 relative">
       {/* Terminal title bar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <span className="text-[var(--accent)]">{"~"}</span>

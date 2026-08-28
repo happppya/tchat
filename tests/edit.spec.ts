@@ -3,6 +3,7 @@ import {
   uniqueGcId,
   resetApp,
   signUp,
+  signUpAdmin,
   createGroupChat,
   sendMessage,
 } from "./helpers";
@@ -21,7 +22,7 @@ test.beforeEach(async ({ page }) => {
 
 test("a user can edit their own message and sees (edited)", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Edit Room");
   await sendMessage(page, "original text");
 
@@ -58,7 +59,7 @@ test("a user can edit their own message and sees (edited)", async ({ page }) => 
 
 test("a user can delete their own message", async ({ page }) => {
   const id = UNIQUE_GC();
-  await signUp(page);
+  await signUpAdmin(page);
   await createGroupChat(page, id, "Delete Room");
   await sendMessage(page, "delete me");
 
@@ -83,7 +84,7 @@ test("a non-owner cannot edit or delete someone else's message", async ({
   const bob = await bobContext.newPage();
 
   try {
-    await signUp(alice);
+    await signUpAdmin(alice);
     await createGroupChat(alice, id, "Owned Room");
     await sendMessage(alice, "alice's message");
 

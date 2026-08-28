@@ -499,7 +499,7 @@ export default function ChatPage() {
         `[data-testid="message-line"][data-message-id="${messageId}"]`
       );
       if (line) {
-        line.scrollIntoView({ behavior: "smooth", block: "center" });
+        line.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
         // Briefly flash the message to draw attention.
         (line as HTMLElement).style.transition = "background-color 0.3s";
         (line as HTMLElement).style.backgroundColor = "var(--accent-light)";
@@ -596,7 +596,10 @@ export default function ChatPage() {
   );
 
   return (
-    <div className="flex h-full">
+    // overflow-x: clip (not hidden): a wide child must never make the shell
+    // row script-scrollable, or scrollIntoView() calls can drag the sidebar
+    // out of view (the "room 0 closes the sidebar" bug).
+    <div className="flex h-full overflow-x-clip">
       <Sidebar
         activeGCId={activeGCId}
         onSelectGC={handleSelectGC}
