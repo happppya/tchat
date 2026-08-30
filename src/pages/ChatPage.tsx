@@ -25,38 +25,16 @@ import NotificationToast from "../components/ui/NotificationToast";
 import PasswordPrompt from "./PasswordPrompt";
 import TutorialPage from "../components/ui/TutorialPage";
 import ChangelogPage from "../components/ui/ChangelogPage";
-import type { CommandAction } from "../components/ui/CommandPalette";
 import { roomTypeFullNames } from "../utils/roomTypes";
 import { errorMessage } from "../utils/format";
-import type {
-  WSMessage,
-  FileAttachment,
-  GameInvitation,
-  GameRole,
-  GameSettings,
-  ImpostorPlayView,
-  CtfPlayView,
-} from "../types";
+import { useMinigames } from "./useMinigames";
+import { buildPaletteActions } from "./paletteActions";
+import type { WSMessage, FileAttachment } from "../types";
 
 export default function ChatPage() {
   const [activeGCId, setActiveGCId] = useState<number | null>(null);
   const [activeForumPostId, setActiveForumPostId] = useState<number | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
-  // Minigames (Phase 1): per-room active games from gameState broadcasts, plus
-  // whichever game's overlay is currently open (soft leave closes it only).
-  const [gamesByRoom, setGamesByRoom] = useState<
-    Record<number, Record<string, GameInvitation>>
-  >({});
-  const [activeGame, setActiveGame] = useState<{
-    gameId: string;
-    roomId: number;
-  } | null>(null);
-  // Minigame gameplay (Phase 3): per-id in-progress play view, plus the
-  // private role dealt to this viewer for the game they're in.
-  const [playViews, setPlayViews] = useState<
-    Record<string, ImpostorPlayView | CtfPlayView>
-  >({});
-  const [roles, setRoles] = useState<Record<string, GameRole>>({});
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [profileUser, setProfileUser] = useState<string | null>(null);
   const [profileEditing, setProfileEditing] = useState(false);
@@ -190,7 +168,13 @@ export default function ChatPage() {
     return new Set(ids);
   }, [messages, activeGCId, isPingForMe]);
 
-  // Wire WebSocket
+  // Wire WebSocket. Frames are routed through a ref so the handler below can
+  // reference useMinigames (which needs send) without a circular ordering.
+  const wsIncomingRef = useRef<(msg: WSMessage) => void>(() => {});
+  const { send } = useWebSocket((msg) => wsIncomingRef.current(msg));
+
+  const games = useMinigames(activeGCId, user?.id ?? null, send);
+
   const handleWSIncoming = useCallback(
     (msg: WSMessage) => {
       if (msg.type === "error") {
@@ -232,141 +216,9 @@ export default function ChatPage() {
         return;
       }
 
-      // Minigame broadcasts (Phase 1): keep the room's invitation cards and
-      // any open overlay in sync. Handle before the message pipeline, which
-      // ignores non-message types.
-      if (
-        msg.type === "gameState" &&
-        msg.gameId &&
-        msg.gameType &&
-        Array.isArray(msg.participantIds)
-      ) {
-        const inv: GameInvitation = {
-          type: "gameState",
-          gameId: msg.gameId,
-          gameType: msg.gameType,
-          hostId: msg.hostId ?? "",
-          groupChatId: msg.groupChatId,
-          status: msg.status ?? "lobby",
-          participantIds: msg.participantIds,
-          inactivePlayerIds: msg.inactivePlayerIds ?? [],
-        };
-        setGamesByRoom((prev) => {
-          const games = { ...(prev[msg.groupChatId] ?? {}) };
-          games[inv.gameId] = inv;
-          return { ...prev, [msg.groupChatId]: games };
-        });
-        if (
-          pendingCreateOpenRef.current &&
-          msg.groupChatId === activeGCId &&
-          inv.hostId === String(user?.id ?? -1)
-        ) {
-          pendingCreateOpenRef.current = false;
-          setActiveGame({ gameId: inv.gameId, roomId: msg.groupChatId });
-        }
-        return;
-      }
-      // The game starting is signalled by a gamePlay broadcast with status
-      // "playing". Update the stored invitation so cards/overlay show it, and
-      // keep the in-progress view for the gameplay panel (spec §5).
-      if (msg.type === "gamePlay" && msg.gameId && msg.game && msg.phase) {
-        const startedId = msg.gameId;
-        const gid = startedId;
-        const base = {
-          type: "gamePlay" as const,
-          gameId: gid,
-          status: msg.status ?? "playing",
-          round: msg.round ?? 1,
-        };
-        const play: ImpostorPlayView | CtfPlayView =
-          msg.game === "complete-the-funny"
-            ? {
-                ...base,
-                game: "complete-the-funny",
-                phase: msg.phase as CtfPlayView["phase"],
-                deadline: msg.deadline ?? null,
-                prompts: msg.prompts ?? {},
-                answered: msg.answered ?? {},
-                phases: Array.isArray(msg.phases)
-                  ? (msg.phases as CtfPlayView["phases"])
-                  : null,
-                leaderboard: msg.leaderboard ?? null,
-              }
-            : {
-                ...base,
-                game: "impostor",
-                phase: msg.phase as ImpostorPlayView["phase"],
-                turnPlayerId: msg.turnPlayerId ?? null,
-                wordViewUntil: msg.wordViewUntil ?? null,
-                hintDeadline: msg.hintDeadline ?? null,
-                hints: msg.hints ?? {},
-                votedOutId: msg.votedOutId ?? null,
-                outcome: msg.outcome ?? null,
-              };
-        setPlayViews((prev) => ({ ...prev, [gid]: play }));
-        setGamesByRoom((prev) => {
-          for (const roomIdStr of Object.keys(prev)) {
-            const roomId = Number(roomIdStr);
-            const games = prev[roomId];
-            if (games && games[startedId]) {
-              return {
-                ...prev,
-                [roomId]: { ...games, [startedId]: { ...games[startedId], status: "playing" } },
-              };
-            }
-          }
-          return prev;
-        });
-        return;
-      }
-      // The private role is dealt to this viewer only (spec §5.4). It carries
-      // the secret word (crewmate) or impostor hint, plus anon name.
-      if (msg.type === "gameRole" && msg.gameId && msg.role) {
-        const role: GameRole = {
-          type: "gameRole",
-          gameId: msg.gameId,
-          role: msg.role,
-          secretWord: msg.secretWord,
-          hint: msg.hint,
-          anonName: msg.anonName,
-        };
-        setRoles((prev) => ({ ...prev, [msg.gameId as string]: role }));
-        return;
-      }
-      if (msg.type === "gameEnded") {
-        const endedGameId = msg.gameId;
-        if (endedGameId) {
-          setGamesByRoom((prev) => {
-            const roomGames = prev[msg.groupChatId];
-            if (!roomGames || !roomGames[endedGameId]) return prev;
-            const games = { ...roomGames };
-            delete games[endedGameId];
-            const next = { ...prev, [msg.groupChatId]: games };
-            if (Object.keys(games).length === 0) delete next[msg.groupChatId];
-            return next;
-          });
-          // Close the overlay if the ended game was open, and drop its play
-          // view + role (the server deletes ended-game data, so do we).
-          setActiveGame((cur) =>
-            cur && cur.gameId === endedGameId ? null : cur
-          );
-        }
-        if (endedGameId) {
-          setPlayViews((prev) => {
-            if (!prev[endedGameId]) return prev;
-            const next = { ...prev };
-            delete next[endedGameId];
-            return next;
-          });
-          setRoles((prev) => {
-            if (!prev[endedGameId]) return prev;
-            const next = { ...prev };
-            delete next[endedGameId];
-            return next;
-          });
-        }
-        return;
-      }
+      // Minigame frames (gameState/gamePlay/gameRole/gameEnded) are handled
+      // entirely by useMinigames; stop propagation here.
+      if (games.handleGameFrame(msg)) return;
 
       // Delegate notification logic (display-name tracking, toasts, desktop, badges).
       handleWSNotifications(msg, isPingForMe);
@@ -374,10 +226,9 @@ export default function ChatPage() {
       handleWSMessage(msg);
       forumWSHandlerRef.current(msg);
     },
-    [handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe]
+    [handleWSMessage, activeGCId, user?.id, handleWSNotifications, isPingForMe, games]
   );
-
-  const { send } = useWebSocket(handleWSIncoming);
+  wsIncomingRef.current = handleWSIncoming;
 
   const handleSendMessage = useCallback(
     (
@@ -403,101 +254,6 @@ export default function ChatPage() {
     },
     [activeGCId, activeForumPostId, send]
   );
-
-  // Game helpers (Phase 1).
-
-  // Set when the user just created a game: open that game's overlay when its
-  // first gameState arrives (spec §2.1: "lobby opens on send"). Only fires
-  // once per create so later roster updates don't reopen a closed overlay.
-  const pendingCreateOpenRef = useRef(false);
-
-  /** Start a game by type id: the server joins the host + broadcasts gameState. */
-  const handleCreateGame = useCallback(
-    (gameType: string) => {
-      if (activeGCId === null) return;
-      pendingCreateOpenRef.current = true;
-      send(
-        JSON.stringify({ type: "gameCreate", gameType, groupChatId: activeGCId })
-      );
-    },
-    [activeGCId, send]
-  );
-
-  /** Open a game from its invitation card: join or rejoin based on membership. */
-  const handleOpenGame = useCallback(
-    (gameId: string) => {
-      if (activeGCId === null) return;
-      const game = (gamesByRoom[activeGCId] ?? {})[gameId];
-      if (!game) return;
-      setActiveGame({ gameId, roomId: activeGCId });
-      const isParticipant = game.participantIds.includes(String(user?.id ?? -1));
-      send(
-        JSON.stringify({
-          type: isParticipant ? "gameRejoin" : "gameJoin",
-          gameId,
-        })
-      );
-    },
-    [activeGCId, gamesByRoom, send, user?.id]
-  );
-
-  /** Host starts the game (spec §4), forwarding host-adjustable settings. */
-  const handleStartGame = useCallback(
-    (gameId: string, settings?: GameSettings) => {
-      send(
-        JSON.stringify({
-          type: "gameStart",
-          gameId,
-          ...(settings && Object.keys(settings).length > 0 ? { settings } : {}),
-        })
-      );
-    },
-    [send]
-  );
-
-  // Gameplay actions (spec §5) — the server infers the actor from the WS
-  // session, so the client only sends the frame type + game + payload.
-  const handleGameHint = useCallback(
-    (gameId: string, hint: string) => {
-      send(JSON.stringify({ type: "gameHint", gameId, hint }));
-    },
-    [send]
-  );
-  const handleGameChoose = useCallback(
-    (gameId: string, choice: "continue" | "vote") => {
-      send(JSON.stringify({ type: "gameChoose", gameId, choice }));
-    },
-    [send]
-  );
-  const handleGameVote = useCallback(
-    (gameId: string, votedForId: string) => {
-      send(JSON.stringify({ type: "gameVote", gameId, votedForId }));
-    },
-    [send]
-  );
-  const handleGameGuess = useCallback(
-    (gameId: string, guess: string) => {
-      send(JSON.stringify({ type: "gameGuess", gameId, guess }));
-    },
-    [send]
-  );
-
-  // Complete the Funny gameplay actions (spec §6).
-  const handleCtfAnswer = useCallback(
-    (gameId: string, answers: string[]) => {
-      send(JSON.stringify({ type: "gameAnswer", gameId, answers }));
-    },
-    [send]
-  );
-  const handleCtfVote = useCallback(
-    (gameId: string, phaseIndex: number, answerId: string) => {
-      send(JSON.stringify({ type: "gameVote", gameId, phaseIndex, answerId }));
-    },
-    [send]
-  );
-
-  /** Close the overlay — a soft leave; invitation card stays so they can rejoin. */
-  const handleCloseGame = useCallback(() => setActiveGame(null), []);
 
   const handleSelectGC = useCallback(async (id: number) => {
     setActionError("");
@@ -807,67 +563,41 @@ export default function ChatPage() {
   // so we additionally let Esc close).
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
-  // App-level actions for the palette.
-  const actions: CommandAction[] = useMemo(
-    () => [
-      {
-        id: "toggle-sidebar",
-        section: "View",
-        label: "Toggle sidebar",
-        run: () => setSidebarVisible((v) => !v),
-      },
-      {
-        id: "edit-profile",
-        section: "Account",
-        label: "Edit profile",
-        keywords: "bio picture avatar",
-        run: handleEditProfile,
-      },
-      {
-        id: "notif-settings",
-        section: "Settings",
-        label: "Notification settings",
-        keywords: "notifications badges pings toasts",
-        run: () => setSettingsOpen(true),
-      },
-      {
-        id: "choose-theme",
-        section: "Settings",
-        label: "Choose theme",
-        keywords: "theme color appearance",
-        run: () => setThemePickerOpen(true),
-      },
-      {
-        id: "logout",
-        section: "Account",
-        label: "Log out",
-        keywords: "signout exit quit",
-        run: () => {
+  // App-level actions for the palette (defined in paletteActions.ts).
+  const actions = useMemo(
+    () =>
+      buildPaletteActions({
+        onToggleSidebar: () => setSidebarVisible((v) => !v),
+        onEditProfile: handleEditProfile,
+        onOpenSettings: () => setSettingsOpen(true),
+        onOpenThemePicker: () => setThemePickerOpen(true),
+        onLogout: () => {
           logout();
           navigate("/login", { replace: true });
         },
-      },
-    ],
-    [logout, navigate, handleEditProfile]
+      }),
+    [setSidebarVisible, handleEditProfile, setSettingsOpen, setThemePickerOpen, logout, navigate]
   );
 
-  // Minigame view state (Phase 1): invitation cards + the open overlay, both
-  // scoped to the active room.
-  const activeRoomGames =
-    activeGCId !== null ? Object.values(gamesByRoom[activeGCId] ?? {}) : [];
-  const activeOverlayGame: GameInvitation | null =
-    activeGame && activeGame.roomId === activeGCId
-      ? (gamesByRoom[activeGame.roomId] ?? {})[activeGame.gameId] ?? null
-      : null;
-  // Gameplay (Phase 3): the open overlay's in-progress view + this viewer's
-  // private role, plus the identity the server keys them by (anon name in
-  // anonymous rooms, else the row user id).
-  const activePlayView: ImpostorPlayView | CtfPlayView | null =
-    activeOverlayGame ? playViews[activeOverlayGame.gameId] ?? null : null;
-  const activeRole: GameRole | null =
-    activeOverlayGame ? roles[activeOverlayGame.gameId] ?? null : null;
-  const activeMeId =
-    activeRole?.anonName ?? (user?.id != null ? String(user.id) : "");
+  // Minigame view state lives in useMinigames: invitation cards + the open
+  // overlay + play views/roles, all scoped to the active room.
+  const {
+    activeRoomGames,
+    activeOverlayGame,
+    activePlayView,
+    activeRole,
+    activeMeId,
+    handleCreateGame,
+    handleOpenGame,
+    handleStartGame,
+    handleGameHint,
+    handleGameChoose,
+    handleGameVote,
+    handleGameGuess,
+    handleCtfAnswer,
+    handleCtfVote,
+    handleCloseGame,
+  } = games;
 
   return (
     // overflow-x: clip (not hidden): a wide child must never make the shell
