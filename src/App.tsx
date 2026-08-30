@@ -1,3 +1,4 @@
+/** App root: adopts a theme and sets up routing (login, signup, chat). */
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import ChatPage from "./pages/ChatPage";
 import LoginPage from "./pages/LoginPage";

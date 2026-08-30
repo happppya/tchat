@@ -1,3 +1,5 @@
+/** Message state for the active room: fetch pages, live WS updates, and
+ *  edit/delete/reaction/pin actions. */
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { Message, WSMessage, GroupChat } from "../types";
 import {

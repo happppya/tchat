@@ -1,3 +1,4 @@
+/** Login page — form that authenticates via /api/login. */
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";

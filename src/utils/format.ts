@@ -1,3 +1,4 @@
+/** Date/time and message formatting helpers for the chat UI. */
 import type { Message } from "../types";
 
 /**

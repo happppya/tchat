@@ -4,10 +4,10 @@ import http from "http";
 import fs from "fs";
 import type { AddressInfo } from "net";
 
-import { openDatabase, type DB } from "./db";
+import { openDatabase, type DB } from "./core/db";
 import { createRouter } from "./routes";
-import { initSessionStore, createSession } from "./auth";
-import { PROJECT_ROOT } from "./constants";
+import { initSessionStore, createSession } from "./core/auth";
+import { PROJECT_ROOT } from "./core/constants";
 
 /**
  * Route-level integration tests: a real Express app over an in-memory SQLite

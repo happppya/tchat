@@ -1,0 +1,272 @@
+/** Password hashing (scrypt), session helpers, and signup/login auth logic. */
+import crypto from 'crypto';
+import type { Request, Response, NextFunction } from 'express';
+import { COOKIE_SAME_SITE } from './constants';
+import type { DB } from './db';
+
+/**
+ * Authentication helpers for the chat server.
+ *
+ * Passwords are hashed with scrypt (Node's built-in, PBKDF2-grade KDF) using a
+ * per-password random salt. Sessions are opaque random tokens stored in SQLite
+ * so they survive server restarts.
+ */
+
+export interface Session {
+  userId: number;
+  username: string;
+  isAdmin: boolean;
+  expires: number;
+}
+
+// Make `req.session` available on Express requests once `requireAuth` runs.
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      session?: Session;
+    }
+  }
+}
+
+const SCRYPT_KEYLEN = 32; // 256-bit derived key
+const SCRYPT_PARAMS = {
+  // scrypt cost (N), block size (r), parallelism (p). N=2^15 is OWASP-aligned
+  // for interactive logins on modern hardware.
+  N: 1 << 15,
+  r: 8,
+  p: 1,
+  maxmem: 64 * 1024 * 1024, // 64 MiB upper bound for the KDF
+};
+
+// The session store is injected after the database opens (server.ts calls
+// initSessionStore). Everything else reads through this module-level handle.
+let sessionDb: DB | null = null;
+
+/** Point the session store at the opened database. Must run before any route. */
+export function initSessionStore(db: DB): void {
+  sessionDb = db;
+}
+
+function getSessionDb(): DB {
+  if (!sessionDb) {
+    throw new Error('Session store not initialized (call initSessionStore(db))');
+  }
+  return sessionDb;
+}
+
+/**
+ * Hash a password. Returns "scrypt:N:r:p:saltHex:hashHex" — a self-describing
+ * string so the verify path can evolve parameters later.
+ */
+export function hashPassword(password: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);
+    crypto.scrypt(
+      password,
+      salt,
+      SCRYPT_KEYLEN,
+      SCRYPT_PARAMS,
+      (err, derivedKey) => {
+        if (err) return reject(err);
+        const { N, r, p } = SCRYPT_PARAMS;
+        resolve(
+          `scrypt:${N}:${r}:${p}:${salt.toString('hex')}:${derivedKey.toString(
+            'hex'
+          )}`
+        );
+      }
+    );
+  });
+}
+
+/**
+ * Verify a password against a stored "scrypt:..." string using a timing-safe
+ * comparison.
+ */
+export function verifyPassword(password: string, stored: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    if (typeof stored !== 'string') return resolve(false);
+    const parts = stored.split(':');
+    if (parts.length !== 6 || parts[0] !== 'scrypt') return resolve(false);
+
+    const N = Number(parts[1]);
+    const r = Number(parts[2]);
+    const p = Number(parts[3]);
+    const salt = Buffer.from(parts[4], 'hex');
+    const expected = Buffer.from(parts[5], 'hex');
+    if (
+      !Number.isFinite(N) ||
+      !Number.isFinite(r) ||
+      !Number.isFinite(p) ||
+      salt.length === 0 ||
+      expected.length === 0
+    ) {
+      return resolve(false);
+    }
+
+    crypto.scrypt(
+      password,
+      salt,
+      expected.length,
+      { N, r, p, maxmem: SCRYPT_PARAMS.maxmem },
+      (err, derivedKey) => {
+        if (err) return reject(err);
+        resolve(
+          derivedKey.length === expected.length &&
+            crypto.timingSafeEqual(derivedKey, expected)
+        );
+      }
+    );
+  });
+}
+
+export const SESSION_COOKIE = 'sid';
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Create a new persistent session for a user, returns the opaque token. */
+export async function createSession(user: {
+  id: number;
+  username: string;
+  isAdmin?: boolean;
+}): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  const db = getSessionDb();
+  await db.run(
+    'INSERT INTO sessions (token, user_id, username, expires_at) VALUES (?, ?, ?, ?)',
+    [token, user.id, user.username, Date.now() + SESSION_TTL_MS]
+  );
+  return token;
+}
+
+/** Look up a session by token. Returns null if missing/expired. */
+async function getSession(token: string | null): Promise<Session | null> {
+  if (!token) return null;
+  const db = getSessionDb();
+  const row = await db.get(
+    'SELECT token, user_id, username, expires_at FROM sessions WHERE token = ?',
+    [token]
+  );
+  if (!row) return null;
+  if (Date.now() > row.expires_at) {
+    await db.run('DELETE FROM sessions WHERE token = ?', [token]);
+    return null;
+  }
+  const userRow = await db.get(
+    'SELECT is_admin FROM users WHERE id = ?',
+    [row.user_id]
+  );
+  // Temporary hardcode: user 'happya' is always admin during prod testing.
+  const isAdmin = row.username === 'happya' || !!userRow?.is_admin;
+  return {
+    userId: row.user_id,
+    username: row.username,
+    isAdmin,
+    expires: row.expires_at,
+  };
+}
+
+/** Delete a session (logout). */
+export async function destroySession(token: string): Promise<void> {
+  const db = getSessionDb();
+  await db.run('DELETE FROM sessions WHERE token = ?', [token]);
+}
+
+/** Remove expired sessions so the table doesn't grow unbounded. */
+export async function pruneExpiredSessions(): Promise<void> {
+  const db = getSessionDb();
+  await db.run('DELETE FROM sessions WHERE expires_at < ?', [Date.now()]);
+}
+
+/**
+ * The SameSite value a cookie may actually carry. `None` is only valid when
+ * paired with `Secure`; browsers silently drop a `SameSite=None` cookie served
+ * over plain HTTP, which is exactly the "session couldn't be saved" failure on
+ * localhost dev. So when the request is not secure we downgrade to Lax.
+ */
+function effectiveSameSite(
+  requested: 'Lax' | 'None',
+  secure: boolean
+): 'Lax' | 'None' {
+  return requested === 'None' && !secure ? 'Lax' : requested;
+}
+
+/** Serialize a token into a Set-Cookie header value. */
+export function sessionCookie(
+  token: string,
+  options: {
+    maxAgeMs?: number;
+    secure?: boolean;
+    sameSite?: 'Lax' | 'None';
+  } = {}
+): string {
+  const maxAgeMs = options.maxAgeMs ?? SESSION_TTL_MS;
+  const secure = options.secure ?? false;
+  const requested = options.sameSite ?? COOKIE_SAME_SITE;
+  const sameSite = effectiveSameSite(requested, secure);
+  if (requested === 'None' && !secure) {
+    console.warn(
+      '[auth] SameSite=None requested but the request is not secure; falling back to SameSite=Lax so the session cookie is not dropped.'
+    );
+  }
+  const attrs = [
+    `${SESSION_COOKIE}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${sameSite}`,
+    `Max-Age=${Math.floor(maxAgeMs / 1000)}`,
+  ];
+  // Only mark Secure when the request actually arrived over HTTPS (directly or
+  // via a trusted proxy). Forcing it on whenever NODE_ENV=production breaks
+  // login/signup on plain-HTTP deploys, because browsers drop Secure cookies.
+  if (secure) attrs.push('Secure');
+  // CHIPS: partitioned third-party cookies are accepted even where plain
+  // third-party cookies are blocked (Chrome incognito), which is exactly the
+  // cross-origin frontend setup SameSite=None exists for. Only valid with
+  // Secure; other browsers ignore the attribute.
+  if (sameSite === 'None' && secure) attrs.push('Partitioned');
+  return attrs.join('; ');
+}
+
+/** Build a cookie that immediately expires (clears the browser cookie). */
+export function clearSessionCookie(secure = false): string {
+  const attrs = [
+    `${SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${effectiveSameSite(COOKIE_SAME_SITE, secure)}`,
+    'Max-Age=0',
+  ];
+  if (secure) attrs.push('Secure');
+  if (COOKIE_SAME_SITE === 'None' && secure) attrs.push('Partitioned');
+  return attrs.join('; ');
+}
+
+/**
+ * Read the session token from a request's Cookie header, returning the
+ * resolved session object (or null). Works for both Express requests and raw
+ * Node IncomingMessage upgrade requests.
+ */
+export async function readSession(req: {
+  headers: { cookie?: string };
+}): Promise<Session | null> {
+  const cookieHeader = req.headers.cookie || '';
+  const match = cookieHeader.match(/(?:^|;)\s*sid=([^;]+)/);
+  if (!match) return null;
+  return getSession(match[1]);
+}
+
+/** Express middleware: require an authenticated session, else 401. */
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const session = await readSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  req.session = session;
+  next();
+}

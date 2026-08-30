@@ -1,3 +1,5 @@
+/** Express routers: auth, group chats, messages, uploads, and admin/mod
+ *  actions. Business logic calls into db.ts; realtime state lives elsewhere. */
 import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
@@ -11,15 +13,15 @@ import {
   clearSessionCookie,
   readSession,
   requireAuth,
-} from './auth';
-import { authLimiter, uploadLimiter, gifLimiter } from './rateLimit';
+} from './core/auth';
+import { authLimiter, uploadLimiter, gifLimiter } from './core/rateLimit';
 import {
   ALLOWED_UPLOAD_MIMES,
   MAX_GC_ID_DIGITS,
   MAX_MESSAGE_LENGTH,
   MAX_UPLOAD_BYTES,
   PROJECT_ROOT,
-} from './constants';
+} from './core/constants';
 import {
   sqliteNow,
   extensionForMime,
@@ -60,7 +62,7 @@ import {
   editForumPost,
   deleteForumPost,
   type DB,
-} from './db';
+} from './core/db';
 
 // Uploaded attachments live on disk under the project root. UPLOAD_DIR
 // overrides the default so a persistent volume can hold them too (must match

@@ -9,7 +9,7 @@ import {
   toggleMuteRoom,
 } from "../services/storage";
 import type { RoomNotifMap, NotifSettings } from "../services/storage";
-import type { Notification } from "../components/NotificationToast";
+import type { Notification } from "../components/ui/NotificationToast";
 import type { WSMessage } from "../types";
 
 /**

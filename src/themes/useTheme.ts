@@ -1,3 +1,5 @@
+/** Theme hook: reads the active theme from a store and applies it as a React
+ *  attribute; also exposes a setter and the current theme name. */
 import { useCallback, useSyncExternalStore } from "react";
 import {
   THEMES,

@@ -1,3 +1,4 @@
+/** Entry point: mounts the App and loads the base stylesheet. */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

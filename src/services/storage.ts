@@ -1,3 +1,4 @@
+/** localStorage persistence for saved group chats and local room groups. */
 import type { SavedGC, LocalGroup } from "../types";
 
 const STORAGE_KEYS = {

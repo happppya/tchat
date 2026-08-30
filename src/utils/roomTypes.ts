@@ -1,3 +1,4 @@
+/** Room type flags + human-readable type names (anonymous, readonly, ...). */
 import type { GroupChat } from "../types";
 
 /**

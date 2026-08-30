@@ -8,25 +8,25 @@ import fs from 'fs';
 import path from 'path';
 import type { Duplex } from 'stream';
 
-import { openDatabase, deleteEmptyRooms } from './src/server/db';
+import { openDatabase, deleteEmptyRooms } from './src/server/core/db';
 import { createRealtime, attachMessageHandler } from './src/server/realtime';
 import { createRouter } from './src/server/routes';
-import { GameManager } from './src/server/games';
-import { startCli } from './src/server/cli';
-import { createGracefulShutdown } from './src/server/shutdown';
+import { GameManager } from './src/server/games/games';
+import { startCli } from './src/server/core/cli';
+import { createGracefulShutdown } from './src/server/core/shutdown';
 import {
   initSessionStore,
   readSession,
   pruneExpiredSessions,
   type Session,
-} from './src/server/auth';
+} from './src/server/core/auth';
 import {
   CLEANUP_INTERVAL_MS,
   FRONTEND_ORIGINS,
   isConfiguredFrontendOrigin,
   isAllowedWsOrigin,
   PROJECT_ROOT,
-} from './src/server/constants';
+} from './src/server/core/constants';
 
 const app = express();
 // Trust the first reverse proxy so req.secure reflects X-Forwarded-Proto.

@@ -3,10 +3,10 @@ import http from "http";
 import type { AddressInfo } from "net";
 import { WebSocket, WebSocketServer } from "ws";
 
-import { openDatabase, type DB } from "./db";
+import { openDatabase, type DB } from "./core/db";
 import { createRealtime, attachMessageHandler } from "./realtime";
-import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from "./constants";
-import type { Session } from "./auth";
+import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from "./core/constants";
+import type { Session } from "./core/auth";
 
 /**
  * Integration-style tests for the WebSocket layer. A real ws server is booted

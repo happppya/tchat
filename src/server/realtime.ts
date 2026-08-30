@@ -1,9 +1,12 @@
+/** The WebSocket server: auth/session handling, message + moderation frames,
+ *  and the minigame lifecycle/gameplay protocol (gameCreate..gameEnded).
+ *  Server-authoritative — game state and timers live here. */
 import { WebSocketServer, WebSocket } from 'ws';
-import type { Session } from './auth';
-import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from './constants';
-import { GameManager, type Game } from './games';
-import { isKnownGameType } from './gameTypes';
-import { IMPOSTOR_WORD_POOL, CTF_PROMPT_POOL } from './gamePools';
+import type { Session } from './core/auth';
+import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from './core/constants';
+import { GameManager, type Game } from './games/games';
+import { isKnownGameType } from './games/gameTypes';
+import { IMPOSTOR_WORD_POOL, CTF_PROMPT_POOL } from './games/gamePools';
 import {
   createImpostorSession,
   submitHint,
@@ -13,7 +16,7 @@ import {
   castVote as castImpostorVote,
   submitGuess,
   type ImpostorSession,
-} from './impostorSession';
+} from './games/impostorSession';
 import {
   createCtfSession,
   validateSettings as validateCtfSettings,
@@ -21,7 +24,7 @@ import {
   timeoutAnswers,
   castVote as castCtfVote,
   type CtfSession,
-} from './completeTheFunny';
+} from './games/completeTheFunny';
 import {
   sqliteNow,
   validateGCID,
@@ -35,7 +38,7 @@ import {
   addMessageToTable,
   bumpForumPost,
   type DB,
-} from './db';
+} from './core/db';
 
 interface Realtime {
   wss: WebSocketServer;

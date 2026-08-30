@@ -1,3 +1,5 @@
+/** The main chat app page: composes sidebar + chat window (or forum views),
+ *  owns the minigame overlay state, and wires the WebSocket message handler. */
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMessages } from "../hooks/useMessages";
@@ -11,19 +13,19 @@ import {
   ROOM_RENAMED_EVENT,
 } from "../services/storage";
 import type { NotifSettings } from "../services/storage";
-import Sidebar from "../components/Sidebar";
-import ChatWindow from "../components/ChatWindow";
-import ForumPage from "../components/ForumPage";
-import ForumPostPage from "../components/ForumPostPage";
-import CommandPalette from "../components/CommandPalette";
-import ProfileModal from "../components/ProfileModal";
-import SettingsModal from "../components/SettingsModal";
-import ThemePicker from "../components/ThemePicker";
-import NotificationToast from "../components/NotificationToast";
+import Sidebar from "../components/sidebar/Sidebar";
+import ChatWindow from "../components/chat/ChatWindow";
+import ForumPage from "../components/forum/ForumPage";
+import ForumPostPage from "../components/forum/ForumPostPage";
+import CommandPalette from "../components/ui/CommandPalette";
+import ProfileModal from "../components/ui/ProfileModal";
+import SettingsModal from "../components/ui/SettingsModal";
+import ThemePicker from "../components/ui/ThemePicker";
+import NotificationToast from "../components/ui/NotificationToast";
 import PasswordPrompt from "./PasswordPrompt";
-import TutorialPage from "../components/TutorialPage";
-import ChangelogPage from "../components/ChangelogPage";
-import type { CommandAction } from "../components/CommandPalette";
+import TutorialPage from "../components/ui/TutorialPage";
+import ChangelogPage from "../components/ui/ChangelogPage";
+import type { CommandAction } from "../components/ui/CommandPalette";
 import { roomTypeFullNames } from "../utils/roomTypes";
 import { errorMessage } from "../utils/format";
 import type {

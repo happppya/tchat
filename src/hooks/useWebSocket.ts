@@ -1,3 +1,5 @@
+/** Maintains the WebSocket connection and routes incoming frames to a handler;
+ *  exposes a send() helper. */
 import { useEffect, useRef, useCallback } from "react";
 import type { WSMessage } from "../types";
 

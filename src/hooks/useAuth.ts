@@ -1,3 +1,5 @@
+/** Auth state: current user, login/signup/logout, persistence warning, and
+ *  room-joining side effects shared across the app. */
 import { useSyncExternalStore, useCallback } from "react";
 import type { AuthUser } from "../types";
 import {

@@ -1,3 +1,4 @@
+/** Modal prompting for a room password when joining a hidden room. */
 import { useRef } from "react";
 
 interface Props {

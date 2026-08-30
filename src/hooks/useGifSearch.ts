@@ -1,3 +1,4 @@
+/** Debounced GIPHY search hook backing the GIF picker. */
 import { useState, useCallback } from "react";
 import type { GiphyResult, SelectedGif } from "../types";
 import { searchGifs } from "../services/api";

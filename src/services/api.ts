@@ -1,7 +1,11 @@
+/** Thin client wrapper over the REST API endpoints (auth, rooms, messages,
+ *  uploads, profiles). */
 import type {
   GroupChat,
   Message,
   ForumPost,
+
+
   GiphyResponse,
   AuthUser,
   UserProfile,
