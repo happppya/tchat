@@ -120,10 +120,16 @@ export function createRouter({
   db,
   broadcast,
   sendToUser,
+  onRoomDeleted,
 }: {
   db: DB;
   broadcast: (payload: unknown, groupChatId?: number | null) => void;
   sendToUser: (userId: number, payload: unknown) => void;
+  /**
+   * Called after a room is successfully deleted so in-play games hosted in
+   * that room can be ended (registry, sessions, and timers).
+   */
+  onRoomDeleted?: (groupChatId: number) => void;
 }): Router {
   const router = express.Router();
 
@@ -466,6 +472,8 @@ export function createRouter({
     await destroyGroupChat(db, gcId);
     // Tell every connected client this room is gone so they can clean up.
     broadcast({ type: 'deleteRoom', groupChatId: gcId });
+    // End any minigames hosted in this room (data deleted, players freed).
+    onRoomDeleted?.(gcId);
     res.json({ message: 'Room deleted' });
   });
 

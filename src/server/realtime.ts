@@ -1,6 +1,27 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Session } from './auth';
 import { MAX_MESSAGE_LENGTH, MAX_WS_FRAME_BYTES } from './constants';
+import { GameManager, type Game } from './games';
+import { isKnownGameType } from './gameTypes';
+import { IMPOSTOR_WORD_POOL, CTF_PROMPT_POOL } from './gamePools';
+import {
+  createImpostorSession,
+  submitHint,
+  timeoutHintTurn,
+  timeoutGuess,
+  choose,
+  castVote as castImpostorVote,
+  submitGuess,
+  type ImpostorSession,
+} from './impostorSession';
+import {
+  createCtfSession,
+  validateSettings as validateCtfSettings,
+  submitAnswers,
+  timeoutAnswers,
+  castVote as castCtfVote,
+  type CtfSession,
+} from './completeTheFunny';
 import {
   sqliteNow,
   validateGCID,
@@ -88,15 +109,30 @@ function wsError(ws: WebSocket, messageText: string): void {
  * is resolved in the HTTP upgrade handler (in server.ts) and stashed on the
  * socket, so this only has to read ws.session.
  */
+/** Room-scoped game cleanup, used when a room is deleted or reaped. */
+export interface GameCleanup {
+  endGamesInRoom: (groupChatId: number) => void;
+}
+
 export function attachMessageHandler({
   wss,
   db,
   broadcast,
+  sendToUser,
+  games,
 }: {
   wss: WebSocketServer;
   db: DB;
   broadcast: (payload: unknown, groupChatId?: number | null) => void;
-}): void {
+  sendToUser: (userId: number, payload: unknown) => void;
+  /** Shared game registry; a fresh one is created when not supplied. */
+  games?: GameManager;
+}): GameCleanup {
+  const manager = games ?? new GameManager();
+  // In-play sessions per game (Impostor / Complete the Funny) plus the
+  // server-enforced turn/answer timers. Ended games clear both.
+  const gameSessions = new Map<string, ImpostorSession | CtfSession>();
+  const gameTimers = new Map<string, NodeJS.Timeout>();
   wss.on('connection', (rawWs: WebSocket) => {
     const ws = rawWs as AuthedSocket;
     const session = ws.session;
@@ -119,7 +155,16 @@ export function attachMessageHandler({
       // catch every rejection would surface as an unhandledRejection and
       // terminate the server.
       try {
-        await handleFrame(message.toString(), { ws, session, db, broadcast });
+        await handleFrame(message.toString(), {
+          ws,
+          session,
+          db,
+          broadcast,
+          sendToUser,
+          games: manager,
+          gameSessions,
+          gameTimers,
+        });
       } catch (err) {
         console.error('[ws] failed to handle frame:', err);
         if (ws.readyState === WebSocket.OPEN) {
@@ -128,10 +173,44 @@ export function attachMessageHandler({
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', async () => {
+      // Closing the tab / losing the connection is a hard leave (spec §3.1):
+      // the player is removed from any game they were in, freeing their
+      // one-game-at-a-time slot, and the room sees the updated roster.
+      const playerId = String(session.userId);
+      const game = manager.gameOf(playerId);
+      if (game) {
+        try {
+          const updated = manager.hardLeaveGame(playerId, game.gameId);
+          await broadcastGameView(
+            db,
+            broadcast,
+            game.groupChatId,
+            updated.participantIds,
+            (map) => gameStatePayload(updated, map)
+          );
+        } catch (err) {
+          console.error('[ws] hard-leave on disconnect failed:', err);
+        }
+      }
       console.log('Client has disconnected');
     });
   });
+
+  return {
+    /**
+     * End every game in a room (used when the room is deleted) and drop the
+     * in-play session and timer for each, so no stale game keeps advancing.
+     */
+    endGamesInRoom(groupChatId: number): void {
+      for (const gameId of manager.endGamesInRoom(groupChatId)) {
+        const timer = gameTimers.get(gameId);
+        if (timer) clearTimeout(timer);
+        gameTimers.delete(gameId);
+        gameSessions.delete(gameId);
+      }
+    },
+  };
 }
 
 const HELP_COMMANDS: [string, string][] = [
@@ -189,10 +268,9 @@ async function broadcastHelp(ctx: {
  */
 async function handleFrame(
   messageString: string,
-  ctx: { ws: WebSocket; session: Session; db: DB; broadcast: Realtime['broadcast'] }
+  ctx: GameFrameCtx
 ): Promise<void> {
-  const { ws, session, db, broadcast } = ctx;
-  console.log(`Received: ${messageString}`);
+  const { ws, session, db, broadcast, games } = ctx;
 
   // The dynamic shape is validated field-by-field below.
   const messageJSON: Record<string, any> = JSON.parse(messageString);
@@ -226,6 +304,19 @@ async function handleFrame(
   if (type === 'help') {
     const page = Math.max(1, parseInt(String(messageJSON.page ?? '1'), 10) || 1);
     broadcastHelp({ db, session, groupChatId, page, broadcast });
+    return;
+  }
+  if (typeof type === 'string' && type.startsWith('game')) {
+    try {
+      await handleGameFrame(messageJSON, ctx);
+    } catch (err) {
+      if (ws.readyState === WebSocket.OPEN) {
+        wsError(
+          ws,
+          err instanceof Error ? err.message : 'Message could not be processed'
+        );
+      }
+    }
     return;
   }
   if (!messageText && !gifUrl && !fileUrl) {
@@ -393,4 +484,702 @@ async function handleFrame(
       await bumpForumPost(db, forumPostIdValue);
     } catch (_) { /* non-critical */ }
   }
+}
+
+interface GameFrameCtx {
+  ws: WebSocket;
+  session: Session;
+  db: DB;
+  broadcast: Realtime['broadcast'];
+  sendToUser: (userId: number, payload: unknown) => void;
+  games: GameManager;
+  gameSessions: Map<string, ImpostorSession | CtfSession>;
+  gameTimers: Map<string, NodeJS.Timeout>;
+}
+
+/**
+ * Game frames (spec §8 Phase 0/2/3). Lifecycle mutations (create/join/leave/
+ * start/end) go through the GameManager and broadcast `gameState`; gameplay
+ * (hint/choose/vote/guess/answer) drives the per-game session and broadcasts
+ * `gamePlay`. Starting an Impostor game privately deals each player their word
+ * (crewmates) or hint (impostors) — the secret word never enters a broadcast.
+ *
+ * Client → server:
+ * - `{ type: 'gameCreate', gameType, groupChatId, settings? }`
+ * - `{ type: 'gameJoin' | 'gameRejoin' | 'gameSoftLeave' | 'gameHardLeave'
+ *     | 'gameStart' | 'gameEnd', gameId, settings? }`
+ * - `{ type: 'gameHint', gameId, hint }`
+ * - `{ type: 'gameChoose', gameId, choice: 'continue' | 'vote' }`
+ * - `{ type: 'gameVote', gameId, votedForId }` (Impostor)
+ * - `{ type: 'gameVote', gameId, phaseIndex, answerId }` (Complete the Funny)
+ * - `{ type: 'gameGuess', gameId, guess }` (Impostor)
+ * - `{ type: 'gameAnswer', gameId, answers: string[] }` (Complete the Funny)
+ */
+async function handleGameFrame(
+  messageJSON: Record<string, any>,
+  ctx: GameFrameCtx
+): Promise<void> {
+  const { ws, session, db, broadcast, games } = ctx;
+  const type: string = messageJSON.type;
+  const gameId: unknown = messageJSON.gameId;
+
+  switch (type) {
+    case 'gameCreate': {
+      const gameType = messageJSON.gameType;
+      const groupChatId = Number(messageJSON.groupChatId);
+      if (typeof gameType !== 'string' || !isKnownGameType(gameType)) {
+        return wsError(ws, 'unknown game type');
+      }
+      if (
+        !Number.isInteger(groupChatId) ||
+        !(await validateGCID(db, groupChatId))
+      ) {
+        return wsError(ws, 'Invalid group chat ID');
+      }
+      if (!(await isRoomMember(db, session.userId, groupChatId))) {
+        return wsError(ws, 'Join this room before creating a game');
+      }
+      const game = games.createGame({
+        gameType,
+        hostId: String(session.userId),
+        groupChatId,
+      });
+      await broadcastGameView(db, broadcast, groupChatId, game.participantIds, (map) =>
+        gameStatePayload(game, map)
+      );
+      return;
+    }
+    case 'gameJoin': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      const updated = games.joinGame(String(session.userId), game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        updated.participantIds,
+        (map) => gameStatePayload(updated, map)
+      );
+      return;
+    }
+    case 'gameStart': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      const updated = games.startGame(String(session.userId), game.gameId);
+      const settings = (messageJSON.settings ?? {}) as Record<string, unknown>;
+      if (game.gameType === 'impostor') {
+        await startImpostorPlay(ctx, updated, settings);
+      } else if (game.gameType === 'complete-the-funny') {
+        await startCtfPlay(ctx, updated, settings);
+      } else {
+        await broadcastGameView(
+          db,
+          broadcast,
+          game.groupChatId,
+          updated.participantIds,
+          (map) => gameStatePayload(updated, map)
+        );
+      }
+      return;
+    }
+    case 'gameHint': {
+      const game = await requirePlayable(ws, session, db, games, ctx.gameSessions, gameId);
+      if (!game) return;
+      if (!requireActivePlayer(ctx, game)) return;
+      const imp = requireImpostorSession(ctx, game);
+      if (!imp) return;
+      try {
+        submitHint(imp, String(session.userId), String(messageJSON.hint ?? ''), Date.now());
+      } catch (err) {
+        return wsError(ws, err instanceof Error ? err.message : 'invalid hint');
+      }
+      scheduleImpostorTimer(ctx, game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        imp.playerIds,
+        (map) => impostorPlayView(imp, game, map)
+      );
+      return;
+    }
+    case 'gameChoose': {
+      const game = await requirePlayable(ws, session, db, games, ctx.gameSessions, gameId);
+      if (!game) return;
+      if (!requireActivePlayer(ctx, game)) return;
+      const imp = requireImpostorSession(ctx, game);
+      if (!imp) return;
+      try {
+        choose(
+          imp,
+          String(session.userId),
+          messageJSON.choice === 'vote' ? 'vote' : 'continue',
+          Date.now()
+        );
+      } catch (err) {
+        return wsError(ws, err instanceof Error ? err.message : 'invalid choice');
+      }
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        imp.playerIds,
+        (map) => impostorPlayView(imp, game, map)
+      );
+      return;
+    }
+    case 'gameVote': {
+      const game = await requirePlayable(ws, session, db, games, ctx.gameSessions, gameId);
+      if (!game) return;
+      if (!requireActivePlayer(ctx, game)) return;
+      const sessionObj = ctx.gameSessions.get(game.gameId);
+      if (!sessionObj) return wsError(ws, 'game not found or has ended');
+      const before = sessionObj.phase.kind;
+      try {
+        if ('roleByPlayerId' in sessionObj) {
+          castImpostorVote(sessionObj, String(session.userId), String(messageJSON.votedForId ?? ''));
+        } else {
+          castCtfVote(
+            sessionObj,
+            String(session.userId),
+            Number(messageJSON.phaseIndex),
+            String(messageJSON.answerId ?? '')
+          );
+        }
+      } catch (err) {
+        return wsError(ws, err instanceof Error ? err.message : 'invalid vote');
+      }
+      await afterVote(ctx, game, sessionObj, before);
+      return;
+    }
+    case 'gameGuess': {
+      const game = await requirePlayable(ws, session, db, games, ctx.gameSessions, gameId);
+      if (!game) return;
+      if (!requireActivePlayer(ctx, game)) return;
+      const imp = requireImpostorSession(ctx, game);
+      if (!imp) return;
+      try {
+        submitGuess(imp, String(session.userId), String(messageJSON.guess ?? ''));
+      } catch (err) {
+        return wsError(ws, err instanceof Error ? err.message : 'invalid guess');
+      }
+      if (imp.phase.kind === 'over') {
+        finishGame(ctx, game, imp.phase.outcome);
+      }
+      return;
+    }
+    case 'gameAnswer': {
+      const game = await requirePlayable(ws, session, db, games, ctx.gameSessions, gameId);
+      if (!game) return;
+      if (!requireActivePlayer(ctx, game)) return;
+      const ctf = ctx.gameSessions.get(game.gameId);
+      if (!ctf || 'roleByPlayerId' in ctf) return wsError(ws, 'not a Complete the Funny game');
+      try {
+        submitAnswers(
+          ctf,
+          String(session.userId),
+          Array.isArray(messageJSON.answers) ? messageJSON.answers.map(String) : [],
+          Date.now()
+        );
+      } catch (err) {
+        return wsError(ws, err instanceof Error ? err.message : 'invalid answers');
+      }
+      scheduleCtfTimer(ctx, game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        ctf.playerIds,
+        (map) => ctfPlayView(ctf, game, map)
+      );
+      return;
+    }
+    case 'gameSoftLeave': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      const updated = games.softLeaveGame(String(session.userId), game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        updated.participantIds,
+        (map) => gameStatePayload(updated, map)
+      );
+      return;
+    }
+    case 'gameRejoin': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      const updated = games.rejoinGame(String(session.userId), game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        updated.participantIds,
+        (map) => gameStatePayload(updated, map)
+      );
+      return;
+    }
+    case 'gameHardLeave': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      const updated = games.hardLeaveGame(String(session.userId), game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        updated.participantIds,
+        (map) => gameStatePayload(updated, map)
+      );
+      return;
+    }
+    case 'gameEnd': {
+      const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+      if (!game) return;
+      if (game.hostId !== String(session.userId)) {
+        return wsError(ws, 'only the host can end the game');
+      }
+      finishGame(ctx, game, undefined);
+      return;
+    }
+    default:
+      throw new Error('not implemented');
+  }
+}
+
+/** Resolve the game; gameplay frames also require an in-play session. */
+async function requirePlayable(
+  ws: WebSocket,
+  session: Session,
+  db: DB,
+  games: GameManager,
+  gameSessions: Map<string, ImpostorSession | CtfSession>,
+  gameId: unknown
+): Promise<Game | null> {
+  const game = await resolveGameForPlayer(ws, session, db, games, gameId);
+  if (!game) return null;
+  if (!gameSessions.has(game.gameId)) {
+    wsError(ws, 'game not found or has ended');
+    return null;
+  }
+  return game;
+}
+
+/** Soft-leavers stay participants but cannot act until they rejoin. */
+function requireActivePlayer(ctx: GameFrameCtx, game: Game): boolean {
+  const playerId = String(ctx.session.userId);
+  if (game.inactivePlayerIds.includes(playerId)) {
+    ctx.ws.send(
+      JSON.stringify({ type: 'error', messageText: 'rejoin the game to keep playing' })
+    );
+    return false;
+  }
+  return true;
+}
+
+function requireImpostorSession(
+  ctx: GameFrameCtx,
+  game: Game
+): ImpostorSession | null {
+  const session = ctx.gameSessions.get(game.gameId);
+  if (!session || !('roleByPlayerId' in session)) {
+    ctx.ws.send(
+      JSON.stringify({ type: 'error', messageText: 'not an Impostor game' })
+    );
+    return null;
+  }
+  return session;
+}
+
+/** Start an Impostor game: deal private roles, then broadcast the play view. */
+async function startImpostorPlay(
+  ctx: GameFrameCtx,
+  game: Game,
+  settings: Record<string, unknown>
+): Promise<void> {
+  const { db, sendToUser, broadcast } = ctx;
+  const impostorCount = Number(settings.impostorCount ?? 1);
+  const hintTimeMs =
+    settings.hintTimeMs !== undefined ? Number(settings.hintTimeMs) : undefined;
+  const wordViewMs =
+    settings.wordViewMs !== undefined ? Number(settings.wordViewMs) : undefined;
+  const guessTimeMs =
+    settings.guessTimeMs !== undefined ? Number(settings.guessTimeMs) : undefined;
+  const play = createImpostorSession({
+    playerIds: game.participantIds,
+    impostorCount,
+    wordPool: IMPOSTOR_WORD_POOL,
+    random: Math.random,
+    now: Date.now(),
+    hintTimeMs,
+    wordViewMs,
+    guessTimeMs,
+  });
+  ctx.gameSessions.set(game.gameId, play);
+  const map = await playerIdentityMap(db, game.groupChatId, game.participantIds);
+  // Private frames: crewmates get the word, impostors get the hint. The word
+  // must never appear in a room broadcast. In anonymous rooms each player
+  // also learns their own anon name so they can find themselves among the
+  // anonymized participant lists in the broadcast views.
+  for (const playerId of game.participantIds) {
+    const isImpostor = play.roleByPlayerId[playerId] === 'impostor';
+    sendToUser(Number(playerId), {
+      type: 'gameRole',
+      gameId: game.gameId,
+      role: isImpostor ? 'impostor' : 'crewmate',
+      ...(isImpostor ? { hint: play.hint } : { secretWord: play.secretWord }),
+      ...(map ? { anonName: map.get(playerId) } : {}),
+    });
+  }
+  scheduleImpostorTimer(ctx, game.gameId);
+  broadcast(impostorPlayView(play, game, map), game.groupChatId);
+}
+
+/** Start a Complete the Funny game: deal prompts, then broadcast the play view. */
+async function startCtfPlay(
+  ctx: GameFrameCtx,
+  game: Game,
+  settings: Record<string, unknown>
+): Promise<void> {
+  const { db, broadcast } = ctx;
+  const ctf = createCtfSession({
+    gameId: game.gameId,
+    playerIds: game.participantIds,
+    settings: validateCtfSettings(settings),
+    promptPool: CTF_PROMPT_POOL,
+    random: Math.random,
+    now: Date.now(),
+  });
+  ctx.gameSessions.set(game.gameId, ctf);
+  scheduleCtfTimer(ctx, game.gameId);
+  await broadcastGameView(
+    db,
+    broadcast,
+    game.groupChatId,
+    ctf.playerIds,
+    (map) => ctfPlayView(ctf, game, map)
+  );
+}
+
+/**
+ * After a vote lands: resolve/advance silently until the phase changes, then
+ * broadcast the outcome — a new round's answering phase, a guess phase, or
+ * game over (which deletes the game).
+ */
+async function afterVote(
+  ctx: GameFrameCtx,
+  game: Game,
+  session: ImpostorSession | CtfSession,
+  beforeKind: string
+): Promise<void> {
+  const { db, broadcast } = ctx;
+  const afterKind = session.phase.kind;
+  if (afterKind === beforeKind) return;
+  if ('roleByPlayerId' in session) {
+    // Impostor: voted-out crewmate → over; voted-out impostor → guess phase.
+    if (session.phase.kind === 'guess') {
+      // Server-enforced deadline so a disconnected impostor can't hang the
+      // game (resolves as crewmates-win on timeout).
+      scheduleGuessTimer(ctx, game.gameId);
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        session.playerIds,
+        (map) => impostorPlayView(session, game, map)
+      );
+    } else if (session.phase.kind === 'over') {
+      finishGame(ctx, game, session.phase.outcome);
+    }
+    return;
+  }
+  if (session.phase.kind === 'over') {
+    finishGame(ctx, game, undefined);
+  } else if (session.phase.kind === 'answering') {
+    scheduleCtfTimer(ctx, game.gameId);
+    await broadcastGameView(
+      db,
+      broadcast,
+      game.groupChatId,
+      session.playerIds,
+      (map) => ctfPlayView(session, game, map)
+    );
+  }
+}
+
+/** Delete the game (data + session + timer) and announce it to the room. */
+function finishGame(
+  ctx: GameFrameCtx,
+  game: Game,
+  outcome: string | undefined
+): void {
+  const { games, broadcast } = ctx;
+  const timer = ctx.gameTimers.get(game.gameId);
+  if (timer) clearTimeout(timer);
+  ctx.gameTimers.delete(game.gameId);
+  ctx.gameSessions.delete(game.gameId);
+  games.endGame(game.gameId);
+  broadcast(
+    {
+      type: 'gameEnded',
+      gameId: game.gameId,
+      groupChatId: game.groupChatId,
+      ...(outcome !== undefined ? { outcome } : {}),
+    },
+    game.groupChatId
+  );
+}
+
+/** Replace any pending timer for a game with the new one. */
+function registerTimer(
+  ctx: GameFrameCtx,
+  gameId: string,
+  handle: NodeJS.Timeout
+): void {
+  const prev = ctx.gameTimers.get(gameId);
+  if (prev) clearTimeout(prev);
+  ctx.gameTimers.set(gameId, handle);
+}
+
+/** Server-enforced hint timer: skip the current turn when its deadline passes. */
+function scheduleImpostorTimer(ctx: GameFrameCtx, gameId: string): void {
+  const { db, broadcast } = ctx;
+  const session = ctx.gameSessions.get(gameId);
+  if (!session || !('roleByPlayerId' in session)) return;
+  if (session.phase.kind !== 'hint') return;
+  const game = ctx.games.getGame(gameId);
+  if (!game) return;
+  const ms = Math.max(0, session.phase.hintDeadline - Date.now());
+  const handle = setTimeout(async () => {
+    timeoutHintTurn(session, Date.now());
+    if (session.phase.kind === 'hint') {
+      scheduleImpostorTimer(ctx, gameId);
+    }
+    await broadcastGameView(
+      db,
+      broadcast,
+      game.groupChatId,
+      session.playerIds,
+      (map) => impostorPlayView(session, game, map)
+    );
+  }, ms);
+  registerTimer(ctx, gameId, handle);
+}
+
+/** Server-enforced guess timer: resolve when the impostor's deadline passes. */
+function scheduleGuessTimer(ctx: GameFrameCtx, gameId: string): void {
+  const { db, broadcast } = ctx;
+  const session = ctx.gameSessions.get(gameId);
+  if (!session || !('roleByPlayerId' in session)) return;
+  if (session.phase.kind !== 'guess') return;
+  const game = ctx.games.getGame(gameId);
+  if (!game) return;
+  const ms = Math.max(0, session.phase.deadline - Date.now());
+  const handle = setTimeout(async () => {
+    timeoutGuess(session, Date.now());
+    if (session.phase.kind === 'over') {
+      finishGame(ctx, game, session.phase.outcome);
+    } else {
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        session.playerIds,
+        (map) => impostorPlayView(session, game, map)
+      );
+    }
+  }, ms);
+  registerTimer(ctx, gameId, handle);
+}
+
+/** Server-enforced answer timer: fill missing answers at the deadline. */
+function scheduleCtfTimer(ctx: GameFrameCtx, gameId: string): void {
+  const { db, broadcast } = ctx;
+  const session = ctx.gameSessions.get(gameId);
+  if (!session || 'roleByPlayerId' in session) return;
+  if (session.phase.kind !== 'answering') return;
+  const game = ctx.games.getGame(gameId);
+  if (!game) return;
+  const ms = Math.max(0, session.phase.deadline - Date.now());
+  const handle = setTimeout(async () => {
+    const now = Date.now();
+    for (const playerId of session.playerIds) {
+      timeoutAnswers(session, playerId, now);
+    }
+    if (session.phase.kind === 'answering') {
+      scheduleCtfTimer(ctx, gameId);
+    }
+    await broadcastGameView(
+      db,
+      broadcast,
+      game.groupChatId,
+      session.playerIds,
+      (map) => ctfPlayView(session, game, map)
+    );
+  }, ms);
+  registerTimer(ctx, gameId, handle);
+}
+
+/**
+ * Player id → display identity for a game broadcast. Null for non-anonymous
+ * rooms (identities are the raw player ids). In anonymous rooms every player
+ * is shown by their stable room-scoped anon name — the same names messages
+ * use — so broadcast frames never leak real user ids. Keys cover the ids in
+ * the payload so callers only need to pass the game's participants.
+ */
+async function playerIdentityMap(
+  db: DB,
+  groupChatId: number,
+  participantIds: Iterable<string>
+): Promise<Map<string, string> | null> {
+  if (!(await roomIsAnonymous(db, groupChatId))) return null;
+  const ids = [...participantIds];
+  // Resolve names in parallel — these are per-player DB lookups and games
+  // broadcast on every turn.
+  const names = await Promise.all(
+    ids.map((playerId) => getAnonName(db, Number(playerId), groupChatId))
+  );
+  return new Map(ids.map((playerId, i) => [playerId, names[i]]));
+}
+
+/**
+ * Build a game view with the right identity map and broadcast it to the
+ * game's room. `playerIds` should be the ids that can appear in the payload
+ * (the session's players for play views, the roster's for state views) so
+ * every id is mapped in anonymous rooms.
+ */
+async function broadcastGameView(
+  db: DB,
+  broadcast: Realtime['broadcast'],
+  groupChatId: number,
+  playerIds: Iterable<string>,
+  build: (map: Map<string, string> | null) => Record<string, unknown>
+): Promise<void> {
+  const map = await playerIdentityMap(db, groupChatId, playerIds);
+  broadcast(build(map), groupChatId);
+}
+
+/** Map a player id to its display identity (anon name), or pass through. */
+function mapId(map: Map<string, string> | null, playerId: string): string {
+  return map?.get(playerId) ?? playerId;
+}
+
+/** Public Impostor play view — never contains the secret word or roles. */
+function impostorPlayView(
+  session: ImpostorSession,
+  game: Game,
+  map: Map<string, string> | null
+): Record<string, unknown> {
+  const hints: Record<string, string> = {};
+  for (const [playerId, hint] of Object.entries(session.hints)) {
+    hints[mapId(map, playerId)] = hint;
+  }
+  return {
+    type: 'gamePlay',
+    gameId: game.gameId,
+    game: 'impostor',
+    status: game.status,
+    round: session.round,
+    phase: session.phase.kind,
+    turnPlayerId:
+      session.phase.kind === 'hint' ? mapId(map, session.phase.turnPlayerId) : null,
+    wordViewUntil:
+      session.phase.kind === 'hint' ? session.phase.wordViewUntil : null,
+    hintDeadline:
+      session.phase.kind === 'hint' ? session.phase.hintDeadline : null,
+    hints,
+    votedOutId: session.votedOutId ? mapId(map, session.votedOutId) : null,
+    outcome: session.phase.kind === 'over' ? session.phase.outcome : null,
+  };
+}
+
+/** Public Complete the Funny play view — answers hidden until voting. */
+function ctfPlayView(
+  session: CtfSession,
+  game: Game,
+  map: Map<string, string> | null
+): Record<string, unknown> {
+  const prompts: Record<string, string[]> = {};
+  const answered: Record<string, number> = {};
+  for (const [playerId, answers] of Object.entries(session.answersByPlayer)) {
+    prompts[mapId(map, playerId)] = answers.map((a) => a.prompt);
+    answered[mapId(map, playerId)] = answers.filter((a) => a.text !== '').length;
+  }
+  const phases =
+    session.phase.kind === 'voting'
+      ? session.phase.phases.map((m) => ({
+          prompt: m.prompt,
+          answers: m.answers.map((a) => ({
+            id: a.id,
+            playerId: mapId(map, a.playerId),
+            text: a.text,
+          })),
+        }))
+      : null;
+  const leaderboard: Record<string, number> | null =
+    session.phase.kind === 'over'
+      ? Object.fromEntries(
+          Object.entries(session.phase.leaderboard).map(([pid, score]) => [
+            mapId(map, pid),
+            score,
+          ])
+        )
+      : null;
+  return {
+    type: 'gamePlay',
+    gameId: game.gameId,
+    game: 'complete-the-funny',
+    status: game.status,
+    round: session.round,
+    phase: session.phase.kind,
+    deadline: session.phase.kind === 'answering' ? session.phase.deadline : null,
+    prompts,
+    answered,
+    phases,
+    leaderboard,
+  };
+}
+
+/**
+ * Resolve the frame's gameId and enforce the room-membership rule: game
+ * actions require being a member of the room the game lives in. Sends the
+ * appropriate error frame and returns null when the frame must be dropped.
+ */
+async function resolveGameForPlayer(
+  ws: WebSocket,
+  session: Session,
+  db: DB,
+  games: GameManager,
+  gameId: unknown
+): Promise<Game | null> {
+  if (typeof gameId !== 'string') {
+    wsError(ws, 'Invalid game id');
+    return null;
+  }
+  const game = games.getGame(gameId);
+  if (!game) {
+    wsError(ws, 'game not found or has ended');
+    return null;
+  }
+  if (!(await isRoomMember(db, session.userId, game.groupChatId))) {
+    wsError(ws, 'Join this room before playing this game');
+    return null;
+  }
+  return game;
+}
+
+function gameStatePayload(
+  game: Game,
+  map: Map<string, string> | null
+): Record<string, unknown> {
+  return {
+    type: 'gameState',
+    gameId: game.gameId,
+    gameType: game.gameType,
+    hostId: mapId(map, game.hostId),
+    groupChatId: game.groupChatId,
+    status: game.status,
+    participantIds: game.participantIds.map((id) => mapId(map, id)),
+    inactivePlayerIds: game.inactivePlayerIds.map((id) => mapId(map, id)),
+  };
 }

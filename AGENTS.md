@@ -273,3 +273,57 @@ Server → client:
 Client → server additions:
 
 - `{ type: "help", groupChatId, page }` — requests paged command help from the system bot
+
+### Minigame frames (Phase 0 protocol)
+
+Games are pure in-memory state (`src/server/games.ts`, `GameManager`) — no DB
+rows. Every game lives in a room (`groupChatId`); all actions require being a
+member of that room. Mutations broadcast a fresh `gameState` snapshot to the
+room's members; ending a game **deletes its data** and broadcasts `gameEnded`
+(a later click on the invitation yields an error — no results screen).
+
+Client → server:
+
+- `{ type: "gameCreate", gameType, groupChatId }` — host creates a game and joins it
+- `{ type: "gameJoin", gameId }` — join a lobby game (blocked once playing)
+- `{ type: "gameRejoin", gameId }` — resume as an existing participant (soft-leavers)
+- `{ type: "gameSoftLeave", gameId }` — close the game window (stay a participant)
+- `{ type: "gameHardLeave", gameId }` — leave the room / close the tab (removed)
+- `{ type: "gameStart", gameId, settings? }` — host starts; settings vary by game
+- `{ type: "gameEnd", gameId }` — host ends the game (data deleted)
+- `{ type: "gameHint", gameId, hint }` — Impostor: submit a hint on your turn
+- `{ type: "gameChoose", gameId, choice: "continue" | "vote" }` — Impostor: round choice
+- `{ type: "gameVote", gameId, votedForId }` — Impostor: vote out a player
+- `{ type: "gameVote", gameId, phaseIndex, answerId }` — CtF: vote an answer in a phase
+- `{ type: "gameGuess", gameId, guess }` — Impostor: the voted-out impostor guesses the word
+- `{ type: "gameAnswer", gameId, answers: string[] }` — CtF: submit answers for your prompts
+
+Server → client:
+
+- `gameState` — `{ gameId, gameType, hostId, groupChatId, status, participantIds, inactivePlayerIds }`
+- `gameRole` — **private** per-player `{ gameId, role, secretWord? | hint?, anonName? }` (word never in a room broadcast; `anonName` present in anonymous rooms)
+
+In **anonymous rooms** (`group_chats.is_anonymous = 1`) the broadcast views
+replace every player id with the player's stable `Guest_XXXX` anon name (from
+`room_anon_names`, via `getAnonName`) — `participantIds`, `hostId`,
+`inactivePlayerIds`, `turnPlayerId`, `votedOutId`, `hints`/`prompts`/`answered`
+keys, phase `playerId`s, and the CtF `leaderboard` keys — so real user ids
+never leave the server. Each `gameRole` includes the recipient's own `anonName`
+so they can find themselves; gameplay actions still use the WS session
+(frames send no player ids), so no client change is needed to act.
+- `gamePlay` — Impostor `{ gameId, game, status, round, phase, turnPlayerId, wordViewUntil, hintDeadline, hints, votedOutId, outcome }`
+- `gamePlay` — CtF `{ gameId, game, status, round, phase, deadline, prompts, answered, phases, leaderboard }`
+- `gameEnded` — `{ gameId, groupChatId, outcome? }`
+
+Impostor `gameStart` settings: `impostorCount` (default 1), `hintTimeMs` (30s),
+`wordViewMs` (10s), `guessTimeMs` (30s). CtF settings: `promptsPerPlayer`
+(2–10, default 4), `rounds`, `answerTimeLimitMs`. All timers are server-enforced;
+overrides exist for tests/host tuning.
+
+Rules enforced by `GameManager` (src/server/games.ts): one game per player, no
+joining a game in progress (prevents the Impostor word leaking to late
+joiners), soft leave ≠ hard leave, ended games are deleted. Closing a tab /
+dropping the socket hard-leaves the player server-side. Deleting a room (or
+the empty-room janitor reaping one) ends every game hosted in it via
+`endGamesInRoom` (`attachMessageHandler` returns a `GameCleanup` handle that
+also clears in-play sessions and timers).

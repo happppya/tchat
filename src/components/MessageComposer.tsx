@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { uploadFile } from "../services/api";
 import { MAX_UPLOAD_BYTES, MAX_MESSAGE_LENGTH } from "../constants";
 import { truncate } from "../utils/format";
+import { AVAILABLE_GAMES } from "../utils/games";
 import type { FileAttachment, ReplyTarget } from "../types";
 import GifPicker from "./GifPicker";
 
@@ -37,6 +38,8 @@ interface Props {
     gifUrl: string | null,
     file?: FileAttachment | null
   ) => void;
+  /** Start a minigame by its type id (spec §2.1). */
+  onCreateGame?: (gameType: string) => void;
   onSlashCommand?: (command: string, arg: string) => void;
   /** The message currently being replied to, if any. */
   replyTo?: ReplyTarget | null;
@@ -60,6 +63,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export default function MessageComposer({
   onSend,
+  onCreateGame,
   replyTo,
   onCancelReply,
   onSlashCommand,
@@ -71,6 +75,7 @@ export default function MessageComposer({
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [file, setFile] = useState<FileAttachment | null>(null);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -278,6 +283,14 @@ export default function MessageComposer({
     }
   };
 
+  const handleGamePick = useCallback(
+    (gameType: string) => {
+      setGameMenuOpen(false);
+      onCreateGame?.(gameType);
+    },
+    [onCreateGame]
+  );
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0];
     e.target.value = "";
@@ -377,7 +390,38 @@ export default function MessageComposer({
         >
           🎞
         </button>
+        <button
+          onClick={() => setGameMenuOpen((g) => !g)}
+          data-testid="game-button"
+          title="Start a game (spec §2.1)"
+          aria-label="Start a game"
+          className="h-10 w-10 flex-shrink-0 flex items-center justify-center border border-[var(--border-primary)] bg-[var(--bg-secondary)] text-base cursor-pointer hover:bg-[var(--bg-tertiary)] hover:border-[var(--accent)]/60 transition-colors"
+        >
+          🎮
+        </button>
       </div>
+
+      {/* Game picker — drops a game invitation into the chat */}
+      {gameMenuOpen && (
+        <div className="absolute bottom-full left-0 right-0 mb-1 z-20">
+          <div
+            data-testid="game-dropdown"
+            className="border border-[var(--accent)] bg-[var(--bg-primary)] text-xs shadow-lg"
+          >
+            {AVAILABLE_GAMES.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => handleGamePick(g.id)}
+                data-testid={`game-option-${g.id}`}
+                className="w-full px-2 py-1.5 flex items-center justify-between gap-3 text-left cursor-pointer text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+              >
+                <span>🎮 {g.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Selected file preview */}
       {file && (

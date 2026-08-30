@@ -1,11 +1,22 @@
 import React, { useRef, useEffect, useMemo, useState, useCallback } from "react";
-import type { FileAttachment, Message, ReplyTarget } from "../types";
+import type {
+  CtfPlayView,
+  FileAttachment,
+  GameInvitation,
+  GameRole,
+  GameSettings,
+  ImpostorPlayView,
+  Message,
+  ReplyTarget,
+} from "../types";
 import { groupMessages, messagePreview, isoDate, formatDay } from "../utils/format";
 import MessageBubble from "./MessageBubble";
 import MessageComposer from "./MessageComposer";
 import PinnedMessages from "./PinnedMessages";
 import MutedUsersPanel from "./MutedUsersPanel";
 import BannedUsersPanel from "./BannedUsersPanel";
+import GameInvitationCard from "./GameInvitationCard";
+import GameOverlay from "./GameOverlay";
 
 interface Props {
   messages: Message[];
@@ -66,6 +77,31 @@ interface Props {
   onJumpToMessage: (messageId: number) => void;
   /** Hide the [ leave room ] / [ delete room ] buttons. */
   hideRoomActions?: boolean;
+  /** Start a minigame by type id from the composer (spec §2.1). */
+  onCreateGame?: (gameType: string) => void;
+  /** Active games in this room, rendered as invitation cards. */
+  games?: GameInvitation[];
+  /** The game whose overlay is open, if any. */
+  activeGame?: GameInvitation | null;
+  /** Open (join/rejoin) a game from its invitation card. */
+  onOpenGame?: (gameId: string) => void;
+  /** Host starts the game (spec §4), with optional lobby settings. */
+  onStartGame?: (gameId: string, settings?: GameSettings | undefined) => void;
+  /** Close the overlay — a soft leave; the invitation stays. */
+  onCloseGame?: () => void;
+  /** In-progress play view for the open overlay (spec §5/§6). */
+  activePlayView?: ImpostorPlayView | CtfPlayView | null;
+  /** Private role dealt to the viewer for the open overlay. */
+  activeRole?: GameRole | null;
+  /** The viewer's display identity — anon name in anonymous rooms, else id. */
+  activeMeId?: string;
+  onGameHint?: (gameId: string, hint: string) => void;
+  onGameChoose?: (gameId: string, choice: "continue" | "vote") => void;
+  onGameVote?: (gameId: string, votedForId: string) => void;
+  onGameGuess?: (gameId: string, guess: string) => void;
+  /** Complete the Funny gameplay actions. */
+  onCtfAnswer?: (gameId: string, answers: string[]) => void;
+  onCtfVote?: (gameId: string, phaseIndex: number, answerId: string) => void;
 }
 
 export default function ChatWindow({
@@ -104,6 +140,21 @@ export default function ChatWindow({
   onUnpinMessage,
   onJumpToMessage,
   hideRoomActions = false,
+  onCreateGame,
+  games = [],
+  activeGame = null,
+  onOpenGame,
+  onStartGame,
+  onCloseGame,
+  activePlayView = null,
+  activeRole = null,
+  activeMeId = "",
+  onGameHint,
+  onGameChoose,
+  onGameVote,
+  onGameGuess,
+  onCtfAnswer,
+  onCtfVote,
 }: Props) {
   const [replyingTo, setReplyingTo] = useState<ReplyTarget | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -449,6 +500,14 @@ export default function ChatWindow({
             />
           </React.Fragment>
         ))}
+        {/* Game invitation cards — rendered live from gameState broadcasts */}
+        {games.map((game) => (
+          <GameInvitationCard
+            key={game.gameId}
+            game={game}
+            onClick={(gameId) => onOpenGame?.(gameId)}
+          />
+        ))}
         <div ref={messagesEndRef} />
       </div>
 
@@ -465,6 +524,7 @@ export default function ChatWindow({
       {/* Composer */}
       <MessageComposer
         onSend={handleComposerSend}
+        onCreateGame={onCreateGame}
         replyTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
         onSlashCommand={onSlashCommand}
@@ -472,6 +532,25 @@ export default function ChatWindow({
         viewerIsStaff={viewerIsStaff}
         viewerIsAdmin={viewerIsAdmin}
       />
+
+      {/* Game window overlay — covers just this chat pane */}
+      {activeGame && onStartGame && onCloseGame && (
+        <GameOverlay
+          game={activeGame}
+          currentUserId={currentUserId}
+          onStart={(gameId, settings) => onStartGame(gameId, settings)}
+          onClose={onCloseGame}
+          playView={activePlayView}
+          role={activeRole}
+          meId={activeMeId}
+          onHint={onGameHint}
+          onChoose={onGameChoose}
+          onVote={onGameVote}
+          onGuess={onGameGuess}
+          onCtfAnswer={onCtfAnswer}
+          onCtfVote={onCtfVote}
+        />
+      )}
     </div>
   );
 }

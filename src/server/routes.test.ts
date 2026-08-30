@@ -20,6 +20,8 @@ let app: Express;
 let httpServer: http.Server;
 let base: string;
 const cookies: Record<string, string> = {};
+// Captures the room-deletion hook so tests can assert game cleanup wiring.
+const onRoomDeletedCalls: number[] = [];
 
 async function request(
   method: string,
@@ -63,7 +65,15 @@ beforeAll(async () => {
 
   app = express();
   app.use(express.json({ limit: "5mb" }));
-  app.use("/api", createRouter({ db, broadcast: () => {}, sendToUser: () => {} }));
+  app.use(
+    "/api",
+    createRouter({
+      db,
+      broadcast: () => {},
+      sendToUser: () => {},
+      onRoomDeleted: (groupChatId) => onRoomDeletedCalls.push(groupChatId),
+    })
+  );
 
   httpServer = http.createServer(app);
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
@@ -623,5 +633,33 @@ describe("room bans endpoint", () => {
   it("is gated to room staff", async () => {
     const res = await listBans("bob");
     expect(res.status).toBe(403);
+  });
+});
+
+describe("game cleanup on room deletion", () => {
+  it("invokes the onRoomDeleted hook when the room owner deletes the room", async () => {
+    onRoomDeletedCalls.length = 0;
+    await db.run(
+      "INSERT INTO group_chats (id, name, owner_user_id) VALUES (777, 'To Delete', 1)"
+    );
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (1, 777)");
+
+    const res = await request("DELETE", "/deleteGC", { groupChatId: 777 }, "alice");
+
+    expect(res.status).toBe(200);
+    expect(onRoomDeletedCalls).toEqual([777]);
+  });
+
+  it("does not invoke the hook when deletion is rejected", async () => {
+    onRoomDeletedCalls.length = 0;
+    await db.run(
+      "INSERT INTO group_chats (id, name, owner_user_id) VALUES (778, 'Not Yours', 1)"
+    );
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (1, 778)");
+
+    const res = await request("DELETE", "/deleteGC", { groupChatId: 778 }, "bob");
+
+    expect(res.status).toBe(403);
+    expect(onRoomDeletedCalls).toEqual([]);
   });
 });

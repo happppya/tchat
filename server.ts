@@ -11,6 +11,7 @@ import type { Duplex } from 'stream';
 import { openDatabase, deleteEmptyRooms } from './src/server/db';
 import { createRealtime, attachMessageHandler } from './src/server/realtime';
 import { createRouter } from './src/server/routes';
+import { GameManager } from './src/server/games';
 import { startCli } from './src/server/cli';
 import { createGracefulShutdown } from './src/server/shutdown';
 import {
@@ -119,12 +120,24 @@ async function main(): Promise<void> {
   console.log('Connected to local SQLite file database!');
 
   // Real-time layer: one WebSocket server + broadcast shared by routes and the
-  // message handler. The db powers member-scoped broadcasts.
+  // message handler. The db powers member-scoped broadcasts. One GameManager
+  // is shared everywhere so room deletion can end in-play games and free
+  // their players.
   const { wss, broadcast, sendToUser } = createRealtime({ db });
-  attachMessageHandler({ wss, db, broadcast });
+  const games = new GameManager();
+  const gameCleanup = attachMessageHandler({ wss, db, broadcast, sendToUser, games });
 
-  // API routes are mounted after the DB is ready.
-  app.use('/api', createRouter({ db, broadcast, sendToUser }));
+  // API routes are mounted after the DB is ready. Deleting a room ends every
+  // game hosted in it (registry, sessions, timers).
+  app.use(
+    '/api',
+    createRouter({
+      db,
+      broadcast,
+      sendToUser,
+      onRoomDeleted: (groupChatId) => gameCleanup.endGamesInRoom(groupChatId),
+    })
+  );
 
   // Catch any error that escapes a route and respond with JSON (plus a server
   // log) instead of Express's default HTML page, so the client can surface a
@@ -169,9 +182,17 @@ async function main(): Promise<void> {
   // Reap fully-empty rooms and expired sessions on a timer. The HTTP server
   // keeps the process alive.
   const cleanupTimer = setInterval(() => {
-    deleteEmptyRooms(db).catch((err) => {
-      console.error('Empty-room cleanup failed:', (err as Error).message);
-    });
+    deleteEmptyRooms(db)
+      .then((deletedRoomIds) => {
+        // End minigames hosted in reaped rooms so no lobby/play session
+        // outlives the room it lived in.
+        for (const roomId of deletedRoomIds) {
+          gameCleanup.endGamesInRoom(roomId);
+        }
+      })
+      .catch((err) => {
+        console.error('Empty-room cleanup failed:', (err as Error).message);
+      });
     pruneExpiredSessions().catch((err) => {
       console.error('Session cleanup failed:', (err as Error).message);
     });

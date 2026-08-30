@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { openDatabase, type DB } from "./db";
+import { openDatabase, deleteEmptyRooms, type DB } from "./db";
 
 /**
  * Connection-level settings live in openDatabase(); these tests pin them so a
@@ -61,6 +61,46 @@ describe("database connection settings", () => {
     try {
       const journalMode = await db.get("PRAGMA journal_mode");
       expect(String(journalMode.journal_mode).toLowerCase()).toBe("delete");
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("deleteEmptyRooms", () => {
+  // EMPTY_ROOM_TTL_MS is captured at import time, so these use real timestamps
+  // relative to the default 24h TTL instead of env overrides.
+  const sqlTime = (msAgo: number) =>
+    new Date(Date.now() - msAgo).toISOString().replace("T", " ").substring(0, 19);
+
+  it("returns the ids of the rooms it deletes", async () => {
+    const db: DB = await openDatabase(":memory:");
+    try {
+      await db.run("INSERT INTO group_chats (id, name, emptied_at) VALUES (111, 'Empty', ?)", [
+        sqlTime(25 * 60 * 60 * 1000),
+      ]);
+      await db.run("INSERT INTO group_chats (id, name) VALUES (222, 'Kept')");
+
+      const deleted = await deleteEmptyRooms(db);
+
+      expect(deleted).toEqual([111]);
+      const kept = await db.get("SELECT id FROM group_chats WHERE id = 222");
+      expect(kept).toBeDefined();
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("returns an empty list when no rooms are due for deletion", async () => {
+    const db: DB = await openDatabase(":memory:");
+    try {
+      await db.run("INSERT INTO group_chats (id, name, emptied_at) VALUES (113, 'Fresh', ?)", [
+        sqlTime(60 * 1000),
+      ]);
+
+      const deleted = await deleteEmptyRooms(db);
+
+      expect(deleted).toEqual([]);
     } finally {
       await db.close();
     }

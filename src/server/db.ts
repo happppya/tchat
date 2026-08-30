@@ -696,8 +696,12 @@ export async function getUserRooms(
   );
 }
 
-/** Delete rooms whose last member left more than EMPTY_ROOM_TTL_MS ago. */
-export async function deleteEmptyRooms(db: DB): Promise<void> {
+/**
+ * Delete rooms whose last member left more than EMPTY_ROOM_TTL_MS ago.
+ * Returns the deleted room ids so callers can also end minigames hosted in
+ * them (otherwise a lobby game could outlive its empty room).
+ */
+export async function deleteEmptyRooms(db: DB): Promise<number[]> {
   const cutoff = new Date(Date.now() - EMPTY_ROOM_TTL_MS)
     .toISOString()
     .replace('T', ' ')
@@ -706,9 +710,12 @@ export async function deleteEmptyRooms(db: DB): Promise<void> {
     'SELECT id FROM group_chats WHERE emptied_at IS NOT NULL AND emptied_at <= ?',
     [cutoff]
   );
+  const deleted: number[] = [];
   for (const room of rooms) {
     await destroyGroupChat(db, room.id);
+    deleted.push(Number(room.id));
   }
+  return deleted;
 }
 
 export async function addMessageToTable(
