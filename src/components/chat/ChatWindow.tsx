@@ -97,6 +97,8 @@ interface Props {
   activeRole?: GameRole | null;
   /** The viewer's display identity — anon name in anonymous rooms, else id. */
   activeMeId?: string;
+  /** True when the open game has ended (overlay stays for result). */
+  activeGameEnded?: boolean;
   onGameHint?: (gameId: string, hint: string) => void;
   onGameChoose?: (gameId: string, choice: "continue" | "vote") => void;
   onGameVote?: (gameId: string, votedForId: string) => void;
@@ -151,6 +153,7 @@ export default function ChatWindow({
   activePlayView = null,
   activeRole = null,
   activeMeId = "",
+  activeGameEnded = false,
   onGameHint,
   onGameChoose,
   onGameVote,
@@ -545,6 +548,7 @@ export default function ChatWindow({
           playView={activePlayView}
           role={activeRole}
           meId={activeMeId}
+          isEnded={activeGameEnded}
           onHint={onGameHint}
           onChoose={onGameChoose}
           onVote={onGameVote}

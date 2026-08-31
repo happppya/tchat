@@ -19,6 +19,9 @@
  */
 export type GameStatus = "lobby" | "playing";
 
+/** Minimum participants required to start any minigame. */
+export const MIN_PLAYERS = 3;
+
 export interface Game {
   gameId: string;
   gameType: string;
@@ -66,6 +69,9 @@ export class GameManager {
     }
     if (game.status === "playing") {
       throw new Error("game is already in progress");
+    }
+    if (game.participantIds.length < MIN_PLAYERS) {
+      throw new Error(`at least ${MIN_PLAYERS} players are required to start`);
     }
     game.status = "playing";
     return game;

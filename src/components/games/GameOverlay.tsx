@@ -29,6 +29,8 @@ interface Props {
   onGuess?: (gameId: string, guess: string) => void;
   onCtfAnswer?: (gameId: string, answers: string[]) => void;
   onCtfVote?: (gameId: string, phaseIndex: number, answerId: string) => void;
+  /** True when the game has ended — overlay stays open for the result. */
+  isEnded?: boolean;
 }
 
 /**
@@ -50,17 +52,17 @@ export default function GameOverlay({
   onGuess,
   onCtfAnswer,
   onCtfVote,
+  isEnded = false,
 }: Props) {
-  const isHost = currentUserId !== null && game.hostId === String(currentUserId);
-  const [settings, setSettings] = useState<GameSettings>({});
-
   const viewerId =
     propMeId || (currentUserId != null ? String(currentUserId) : "");
+  const isHost = currentUserId !== null && (game.hostId === viewerId || game.hostId === String(currentUserId));
+  const [settings, setSettings] = useState<GameSettings>({});
 
   return (
     <div
       data-testid="game-overlay"
-      className="absolute inset-0 z-40 flex flex-col border border-[var(--border-primary)] bg-[var(--bg-primary)] overflow-y-auto"
+      className="absolute inset-0 z-40 flex flex-col border border-[var(--border-primary)] bg-[var(--bg-primary)] overflow-y-auto animate-[fadeIn_0.2s_ease]"
     >
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
         <span className="text-[var(--accent)]">🎮</span>
@@ -71,7 +73,7 @@ export default function GameOverlay({
           data-testid="game-status"
           className="text-[10px] text-[var(--text-muted)] border border-[var(--border-primary)] px-1 py-0.5"
         >
-          {game.status === "playing" ? "In Progress" : "Lobby"}
+          {isEnded ? "Game Over" : game.status === "playing" ? "In Progress" : "Lobby"}
         </span>
         <button
           type="button"
@@ -96,7 +98,7 @@ export default function GameOverlay({
               className="flex items-center gap-2 text-sm text-[var(--text-primary)]"
             >
               <span>{id}</span>
-              {currentUserId !== null && id === game.hostId && (
+              {currentUserId !== null && id === viewerId && (
                 <span className="text-[10px] text-[var(--accent)] border border-[var(--accent)]/40 px-1 py-0.5">
                   host
                 </span>

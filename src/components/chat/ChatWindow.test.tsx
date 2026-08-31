@@ -25,9 +25,15 @@ vi.mock("./GifPicker", () => ({
   default: () => null,
 }));
 
-// jsdom doesn't implement scrollIntoView; stub it so the scroll effect runs.
-if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = () => {};
+// jsdom doesn't implement scrollIntoView/scrollTo; stub them so the scroll
+// effects in ChatWindow run without throwing.
+if (typeof Element !== "undefined") {
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
+  if (!Element.prototype.scrollTo) {
+    Element.prototype.scrollTo = () => {};
+  }
 }
 
 // This project's vitest config doesn't enable `globals`, so testing-library's

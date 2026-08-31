@@ -51,8 +51,18 @@ export interface ImpostorPlayView {
   hintDeadline?: number | null;
   /** Hints keyed by the giver's display identity. */
   hints: Record<string, string>;
+  /** Past rounds' hints, keyed by round number then giver identity. */
+  hintsByRound?: Record<string, Record<string, string>>;
+  /** Running tally of continue-vs-vote choices, keyed by display identity. */
+  choices?: Record<string, "continue" | "vote">;
+  /** Running tally of who-voted-for-whom, keyed by voter display identity. */
+  votes?: Record<string, string>;
   votedOutId: string | null;
   outcome: string | null;
+  /** Who the impostor(s) were — only present in the final "over" view. */
+  impostorIds?: string[];
+  /** The secret word — only present in the final "over" view (safe to reveal). */
+  secretWord?: string;
 }
 
 /** Host-adjustable game settings (spec §4/§6.1), sent on gameStart. */
@@ -65,12 +75,16 @@ export interface GameSettings {
   wordViewMs?: number;
   /** Impostor: guess deadline ms (default 30000). */
   guessTimeMs?: number;
+  /** Impostor: maximum number of rounds, 1–100 (default 5). */
+  maxRounds?: number;
   /** Complete the Funny: prompts per player, 2–10 (default 4). */
   promptsPerPlayer?: number;
   /** Complete the Funny: number of rounds (default 3). */
   rounds?: number;
   /** Complete the Funny: answer time limit ms (default 60000). */
   answerTimeLimitMs?: number;
+  /** Complete the Funny: per-matchup voting time limit ms (default 30000). */
+  voteTimeMs?: number;
 }
 
 /** Complete the Funny phases surfaced by the public play view. */
@@ -81,12 +95,16 @@ export interface CtfViewAnswer {
   id: string;
   playerId: string;
   text: string;
+  /** How many votes this answer received (0 until voted on). */
+  voteCount: number;
 }
 
 /** A voting matchup in the public play view. */
 export interface CtfViewMatchup {
   prompt: string;
   answers: CtfViewAnswer[];
+  /** Per-matchup voting deadline (CTF-2). */
+  voteDeadline: number | null;
 }
 
 /** Public Complete the Funny play view broadcast to the room (spec §6). */
@@ -103,8 +121,14 @@ export interface CtfPlayView {
   prompts: Record<string, string[]>;
   /** How many prompts each player has filled this round, by display identity. */
   answered: Record<string, number>;
+  /** Running scores by display identity (CTF-4, always visible). */
+  scores?: Record<string, number>;
   /** Voting matchups, when voting. */
   phases: CtfViewMatchup[] | null;
+  /** Which matchup everyone is voting on now (CTF-2 synchronized). */
+  currentMatchup?: number;
+  /** Voting deadline for the current matchup, when voting (CTF-2). */
+  voteDeadline?: number | null;
   /** Final scores, when over. */
   leaderboard: Record<string, number> | null;
 }

@@ -23,6 +23,7 @@ import {
   submitAnswers,
   timeoutAnswers,
   castVote as castCtfVote,
+  timeoutVote as timeoutCtfVote,
   type CtfSession,
 } from './games/completeTheFunny';
 import {
@@ -622,6 +623,14 @@ async function handleGameFrame(
       } catch (err) {
         return wsError(ws, err instanceof Error ? err.message : 'invalid choice');
       }
+      // When max rounds is reached and everyone continues, choose() ends
+      // the game as a tie. Broadcast the final "over" play view (I-5) so
+      // clients render the result screen, then finish the game; the overlay
+      // stays open on the client until each player closes it.
+      if (imp.phase.kind === 'over') {
+        await broadcastGameOverView(ctx, game, imp, imp.phase.outcome);
+        return;
+      }
       await broadcastGameView(
         db,
         broadcast,
@@ -640,7 +649,12 @@ async function handleGameFrame(
       const before = sessionObj.phase.kind;
       try {
         if ('roleByPlayerId' in sessionObj) {
-          castImpostorVote(sessionObj, String(session.userId), String(messageJSON.votedForId ?? ''));
+          // The client sends a display name (username / anon name) as
+          // votedForId; reverse-map it to the raw user id the session uses.
+          const map = await playerIdentityMap(db, game.groupChatId, sessionObj.playerIds);
+          const reverse = new Map([...map.entries()].map(([id, name]) => [name, id]));
+          const votedForId = reverse.get(String(messageJSON.votedForId ?? '')) ?? String(messageJSON.votedForId ?? '');
+          castImpostorVote(sessionObj, String(session.userId), votedForId);
         } else {
           castCtfVote(
             sessionObj,
@@ -667,7 +681,7 @@ async function handleGameFrame(
         return wsError(ws, err instanceof Error ? err.message : 'invalid guess');
       }
       if (imp.phase.kind === 'over') {
-        finishGame(ctx, game, imp.phase.outcome);
+        await broadcastGameOverView(ctx, game, imp, imp.phase.outcome);
       }
       return;
     }
@@ -808,6 +822,8 @@ async function startImpostorPlay(
     settings.wordViewMs !== undefined ? Number(settings.wordViewMs) : undefined;
   const guessTimeMs =
     settings.guessTimeMs !== undefined ? Number(settings.guessTimeMs) : undefined;
+  const maxRounds =
+    settings.maxRounds !== undefined ? Number(settings.maxRounds) : undefined;
   const play = createImpostorSession({
     playerIds: game.participantIds,
     impostorCount,
@@ -817,6 +833,7 @@ async function startImpostorPlay(
     hintTimeMs,
     wordViewMs,
     guessTimeMs,
+    maxRounds,
   });
   ctx.gameSessions.set(game.gameId, play);
   const map = await playerIdentityMap(db, game.groupChatId, game.participantIds);
@@ -831,7 +848,7 @@ async function startImpostorPlay(
       gameId: game.gameId,
       role: isImpostor ? 'impostor' : 'crewmate',
       ...(isImpostor ? { hint: play.hint } : { secretWord: play.secretWord }),
-      ...(map ? { anonName: map.get(playerId) } : {}),
+      ...(map.get(playerId) !== playerId ? { anonName: map.get(playerId) } : {}),
     });
   }
   scheduleImpostorTimer(ctx, game.gameId);
@@ -877,13 +894,20 @@ async function afterVote(
 ): Promise<void> {
   const { db, broadcast } = ctx;
   const afterKind = session.phase.kind;
-  if (afterKind === beforeKind) return;
+  // For Impostor, broadcast on every vote so the live vote tally
+  // (I-1 dots) updates for everyone — not just when the phase changes.
   if ('roleByPlayerId' in session) {
     // Impostor: voted-out crewmate → over; voted-out impostor → guess phase.
+    // Always broadcast so the live vote tally (I-1 dots) updates on every
+    // vote, even while still in the vote phase.
     if (session.phase.kind === 'guess') {
       // Server-enforced deadline so a disconnected impostor can't hang the
       // game (resolves as crewmates-win on timeout).
       scheduleGuessTimer(ctx, game.gameId);
+    }
+    if (session.phase.kind === 'over') {
+      await broadcastGameOverView(ctx, game, session, session.phase.outcome);
+    } else {
       await broadcastGameView(
         db,
         broadcast,
@@ -891,14 +915,15 @@ async function afterVote(
         session.playerIds,
         (map) => impostorPlayView(session, game, map)
       );
-    } else if (session.phase.kind === 'over') {
-      finishGame(ctx, game, session.phase.outcome);
     }
     return;
   }
   if (session.phase.kind === 'over') {
-    finishGame(ctx, game, undefined);
+    // CTF-6: broadcast the final "over" play view (ranked leaderboard)
+    // before ending the game, so clients render the scoreboard.
+    await broadcastCtfGameOverView(ctx, game, session);
   } else if (session.phase.kind === 'answering') {
+    // Round advanced to the next answering phase.
     scheduleCtfTimer(ctx, game.gameId);
     await broadcastGameView(
       db,
@@ -907,7 +932,63 @@ async function afterVote(
       session.playerIds,
       (map) => ctfPlayView(session, game, map)
     );
+  } else {
+    // Still voting (synchronized): schedule the per-matchup vote timer so
+    // a straggler can't hang the game, and re-broadcast the live tally.
+    scheduleCtfVoteTimer(ctx, game.gameId);
+    await broadcastGameView(
+      db,
+      broadcast,
+      game.groupChatId,
+      session.playerIds,
+      (map) => ctfPlayView(session, game, map)
+    );
   }
+}
+
+/**
+ * Broadcast the final "over" play view (I-5: clients must render the result
+ * screen — outcome, who the slime was, the secret word — and keep it until
+ * each player closes the overlay), then finish the game. The session is
+ * still alive at broadcast time so the play view carries the outcome; the
+ * client persists the last play view after gameEnded (useMinigames).
+ */
+async function broadcastGameOverView(
+  ctx: GameFrameCtx,
+  game: Game,
+  session: ImpostorSession,
+  outcome: string
+): Promise<void> {
+  const { db, broadcast } = ctx;
+  await broadcastGameView(
+    db,
+    broadcast,
+    game.groupChatId,
+    session.playerIds,
+    (map) => impostorPlayView(session, game, map)
+  );
+  finishGame(ctx, game, outcome);
+}
+
+/**
+ * CTF-6: broadcast the final "over" play view (ranked leaderboard) before
+ * ending the game, mirroring the Impostor I-5 fix. The client persists the
+ * last play view after gameEnded (useMinigames), so the scoreboard stays.
+ */
+async function broadcastCtfGameOverView(
+  ctx: GameFrameCtx,
+  game: Game,
+  session: CtfSession
+): Promise<void> {
+  const { db, broadcast } = ctx;
+  await broadcastGameView(
+    db,
+    broadcast,
+    game.groupChatId,
+    session.playerIds,
+    (map) => ctfPlayView(session, game, map)
+  );
+  finishGame(ctx, game, undefined);
 }
 
 /** Delete the game (data + session + timer) and announce it to the room. */
@@ -981,7 +1062,7 @@ function scheduleGuessTimer(ctx: GameFrameCtx, gameId: string): void {
   const handle = setTimeout(async () => {
     timeoutGuess(session, Date.now());
     if (session.phase.kind === 'over') {
-      finishGame(ctx, game, session.phase.outcome);
+      await broadcastGameOverView(ctx, game, session, session.phase.outcome);
     } else {
       await broadcastGameView(
         db,
@@ -1024,25 +1105,71 @@ function scheduleCtfTimer(ctx: GameFrameCtx, gameId: string): void {
 }
 
 /**
- * Player id → display identity for a game broadcast. Null for non-anonymous
- * rooms (identities are the raw player ids). In anonymous rooms every player
- * is shown by their stable room-scoped anon name — the same names messages
- * use — so broadcast frames never leak real user ids. Keys cover the ids in
- * the payload so callers only need to pass the game's participants.
+ * Server-enforced per-matchup voting timer (CTF-2): when the current
+ * matchup's deadline passes, advance even if not everyone voted (stragglers'
+ * votes don't count). If the round resolves, broadcast the over view (CTF-6).
+ */
+function scheduleCtfVoteTimer(ctx: GameFrameCtx, gameId: string): void {
+  const { db, broadcast } = ctx;
+  const session = ctx.gameSessions.get(gameId);
+  if (!session || 'roleByPlayerId' in session) return;
+  if (session.phase.kind !== 'voting') return;
+  const matchup = session.phase.phases[session.phase.current];
+  if (!matchup) return;
+  const game = ctx.games.getGame(gameId);
+  if (!game) return;
+  const ms = Math.max(0, matchup.voteDeadline - Date.now());
+  const handle = setTimeout(async () => {
+    const before = session.phase.kind;
+    timeoutCtfVote(session, Date.now());
+    const after = session.phase.kind;
+    if (session.phase.kind === 'voting') {
+      // Still voting on the next matchup — reschedule.
+      scheduleCtfVoteTimer(ctx, gameId);
+    }
+    if (after === 'over' && before !== 'over') {
+      await broadcastCtfGameOverView(ctx, game, session);
+    } else {
+      await broadcastGameView(
+        db,
+        broadcast,
+        game.groupChatId,
+        session.playerIds,
+        (map) => ctfPlayView(session, game, map)
+      );
+    }
+  }, ms);
+  registerTimer(ctx, gameId, handle);
+}
+
+/**
+ * Player id → display identity for a game broadcast. In anonymous rooms every
+ * player is shown by their stable room-scoped anon name (the same names
+ * messages use). In non-anonymous rooms each player is shown by their
+ * username. Keys cover the ids in the payload so callers only need to pass
+ * the game's participants.
  */
 async function playerIdentityMap(
   db: DB,
   groupChatId: number,
   participantIds: Iterable<string>
-): Promise<Map<string, string> | null> {
-  if (!(await roomIsAnonymous(db, groupChatId))) return null;
+): Promise<Map<string, string>> {
   const ids = [...participantIds];
-  // Resolve names in parallel — these are per-player DB lookups and games
-  // broadcast on every turn.
-  const names = await Promise.all(
-    ids.map((playerId) => getAnonName(db, Number(playerId), groupChatId))
+  if (await roomIsAnonymous(db, groupChatId)) {
+    const names = await Promise.all(
+      ids.map((playerId) => getAnonName(db, Number(playerId), groupChatId))
+    );
+    return new Map(ids.map((playerId, i) => [playerId, names[i]]));
+  }
+  // Non-anonymous: resolve usernames in one bulk query.
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db.all(
+    `SELECT id, username FROM users WHERE id IN (${placeholders})`,
+    ids.map(Number)
   );
-  return new Map(ids.map((playerId, i) => [playerId, names[i]]));
+  const byId = new Map<number, string>(rows.map((r) => [Number(r.id), r.username]));
+  return new Map(ids.map((id) => [id, byId.get(Number(id)) ?? id]));
 }
 
 /**
@@ -1056,26 +1183,42 @@ async function broadcastGameView(
   broadcast: Realtime['broadcast'],
   groupChatId: number,
   playerIds: Iterable<string>,
-  build: (map: Map<string, string> | null) => Record<string, unknown>
+  build: (map: Map<string, string>) => Record<string, unknown>
 ): Promise<void> {
   const map = await playerIdentityMap(db, groupChatId, playerIds);
   broadcast(build(map), groupChatId);
 }
 
-/** Map a player id to its display identity (anon name), or pass through. */
-function mapId(map: Map<string, string> | null, playerId: string): string {
-  return map?.get(playerId) ?? playerId;
+/** Map a player id to its display identity. Falls back to the raw id. */
+function mapId(map: Map<string, string>, playerId: string): string {
+  return map.get(playerId) ?? playerId;
 }
 
-/** Public Impostor play view — never contains the secret word or roles. */
+/** Public Impostor play view — roles/word stay private until the "over" phase. */
 function impostorPlayView(
   session: ImpostorSession,
   game: Game,
-  map: Map<string, string> | null
+  map: Map<string, string>
 ): Record<string, unknown> {
   const hints: Record<string, string> = {};
   for (const [playerId, hint] of Object.entries(session.hints)) {
     hints[mapId(map, playerId)] = hint;
+  }
+  const hintsByRound: Record<string, Record<string, string>> = {};
+  for (const [round, roundHints] of Object.entries(session.hintsByRound)) {
+    const mapped: Record<string, string> = {};
+    for (const [playerId, hint] of Object.entries(roundHints)) {
+      mapped[mapId(map, playerId)] = hint;
+    }
+    hintsByRound[round] = mapped;
+  }
+  const choices: Record<string, "continue" | "vote"> = {};
+  for (const [playerId, choice] of Object.entries(session.choices)) {
+    choices[mapId(map, playerId)] = choice;
+  }
+  const votes: Record<string, string> = {};
+  for (const [voter, votedFor] of Object.entries(session.votes)) {
+    votes[mapId(map, voter)] = mapId(map, votedFor);
   }
   return {
     type: 'gamePlay',
@@ -1091,8 +1234,21 @@ function impostorPlayView(
     hintDeadline:
       session.phase.kind === 'hint' ? session.phase.hintDeadline : null,
     hints,
+    hintsByRound,
+    choices,
+    votes,
     votedOutId: session.votedOutId ? mapId(map, session.votedOutId) : null,
     outcome: session.phase.kind === 'over' ? session.phase.outcome : null,
+    // Reveal who the impostor(s) were + the secret word once the game is
+    // over. Safe because finishGame() deletes the session right after.
+    ...(session.phase.kind === 'over'
+      ? {
+          impostorIds: Object.entries(session.roleByPlayerId)
+            .filter(([, r]) => r === 'impostor')
+            .map(([id]) => mapId(map, id)),
+          secretWord: session.secretWord,
+        }
+      : {}),
   };
 }
 
@@ -1100,7 +1256,7 @@ function impostorPlayView(
 function ctfPlayView(
   session: CtfSession,
   game: Game,
-  map: Map<string, string> | null
+  map: Map<string, string>
 ): Record<string, unknown> {
   const prompts: Record<string, string[]> = {};
   const answered: Record<string, number> = {};
@@ -1110,15 +1266,27 @@ function ctfPlayView(
   }
   const phases =
     session.phase.kind === 'voting'
-      ? session.phase.phases.map((m) => ({
-          prompt: m.prompt,
-          answers: m.answers.map((a) => ({
-            id: a.id,
-            playerId: mapId(map, a.playerId),
-            text: a.text,
-          })),
-        }))
+      ? session.phase.phases.map((m) => {
+          const voteCounts = new Map<string, number>();
+          for (const answerId of Object.values(m.votes)) {
+            voteCounts.set(answerId, (voteCounts.get(answerId) ?? 0) + 1);
+          }
+          return {
+            prompt: m.prompt,
+            answers: m.answers.map((a) => ({
+              id: a.id,
+              playerId: mapId(map, a.playerId),
+              text: a.text,
+              voteCount: voteCounts.get(a.id) ?? 0,
+            })),
+            voteDeadline: m.voteDeadline ?? null,
+          };
+        })
       : null;
+  const scores: Record<string, number> = {};
+  for (const [playerId, score] of Object.entries(session.scores)) {
+    if (score > 0) scores[mapId(map, playerId)] = score;
+  }
   const leaderboard: Record<string, number> | null =
     session.phase.kind === 'over'
       ? Object.fromEntries(
@@ -1138,7 +1306,14 @@ function ctfPlayView(
     deadline: session.phase.kind === 'answering' ? session.phase.deadline : null,
     prompts,
     answered,
+    scores,
     phases,
+    currentMatchup:
+      session.phase.kind === 'voting' ? session.phase.current : undefined,
+    voteDeadline:
+      session.phase.kind === 'voting'
+        ? (session.phase.phases[session.phase.current]?.voteDeadline ?? null)
+        : null,
     leaderboard,
   };
 }
@@ -1173,7 +1348,7 @@ async function resolveGameForPlayer(
 
 function gameStatePayload(
   game: Game,
-  map: Map<string, string> | null
+  map: Map<string, string>
 ): Record<string, unknown> {
   return {
     type: 'gameState',

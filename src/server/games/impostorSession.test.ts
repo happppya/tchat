@@ -4,6 +4,7 @@ import {
   WORD_VIEW_MS,
   createImpostorSession,
   GUESS_TIME_MS,
+  DEFAULT_MAX_ROUNDS,
   submitHint,
   timeoutHintTurn,
   timeoutGuess,
@@ -201,15 +202,52 @@ describe("choose", () => {
     expect(session.phase.turnPlayerId).toBe(session.turnOrder[0]);
   });
 
-  it("enters the final voting phase when anyone chooses to vote", () => {
+  it("preserves past rounds' hints in hintsByRound", () => {
+    const session = newSession();
+    playAllHints(session, NOW);
+    const round1Hints = { ...session.hints };
+
+    for (const playerId of session.playerIds) {
+      choose(session, playerId, "continue", NOW + 5000);
+    }
+
+    expect(session.hintsByRound[1]).toEqual(round1Hints);
+    expect(session.hints).toEqual({});
+  });
+
+  it("forces a vote only when a majority chooses to vote (I-1)", () => {
     const session = newSession();
     playAllHints(session, NOW);
 
+    // 2 continue + 1 vote → majority continues, round continues.
     choose(session, session.playerIds[0], "continue", NOW + 5000);
     choose(session, session.playerIds[1], "vote", NOW + 5000);
     choose(session, session.playerIds[2], "continue", NOW + 5000);
 
+    expect(session.phase.kind).toBe("hint");
+    expect(session.round).toBe(2);
+  });
+
+  it("forces a vote when a majority chooses to vote (I-1)", () => {
+    const session = newSession();
+    playAllHints(session, NOW);
+
+    // 2 vote + 1 continue → majority votes.
+    choose(session, session.playerIds[0], "vote", NOW + 5000);
+    choose(session, session.playerIds[1], "continue", NOW + 5000);
+    choose(session, session.playerIds[2], "vote", NOW + 5000);
+
     expect(session.phase.kind).toBe("vote");
+  });
+
+  it("continues on a tie (I-1)", () => {
+    const session = newSession();
+    playAllHints(session, NOW);
+
+    choose(session, session.playerIds[0], "vote", NOW + 5000);
+    choose(session, session.playerIds[1], "continue", NOW + 5000);
+
+    expect(session.phase.kind).toBe("choose");
   });
 
   it("rejects choices from non-participants", () => {
@@ -219,6 +257,83 @@ describe("choose", () => {
     expect(() => choose(session, "z", "continue", NOW + 5000)).toThrow(
       /not a participant/
     );
+  });
+});
+
+describe("maxRounds", () => {
+  it("defaults to 5 rounds", () => {
+    const session = newSession();
+
+    expect(session.maxRounds).toBe(DEFAULT_MAX_ROUNDS);
+    expect(DEFAULT_MAX_ROUNDS).toBe(5);
+  });
+
+  it("ends as a tie when max rounds is reached and everyone continues", () => {
+    const session = createImpostorSession({
+      playerIds: ["a", "b", "c"],
+      impostorCount: 1,
+      wordPool: POOL,
+      random: mulberry32(42),
+      now: NOW,
+      maxRounds: 2,
+    });
+
+    // Round 1: all hint, all continue.
+    playAllHints(session, NOW);
+    for (const playerId of session.playerIds) {
+      choose(session, playerId, "continue", NOW + 5000);
+    }
+    expect(session.round).toBe(2);
+
+    // Round 2 (the max): all hint, all continue → game over (tie).
+    playAllHints(session, NOW + 10000);
+    for (const playerId of session.playerIds) {
+      choose(session, playerId, "continue", NOW + 15000);
+    }
+
+    expect(session.phase.kind).toBe("over");
+    if (session.phase.kind !== "over") return;
+    expect(session.phase.outcome).toBe("tie");
+  });
+
+  it("respects a custom maxRounds override", () => {
+    const session = createImpostorSession({
+      playerIds: ["a", "b", "c"],
+      impostorCount: 1,
+      wordPool: POOL,
+      random: mulberry32(42),
+      now: NOW,
+      maxRounds: 1,
+    });
+
+    // Round 1 (the max): all hint, all continue → game over (tie).
+    playAllHints(session, NOW);
+    for (const playerId of session.playerIds) {
+      choose(session, playerId, "continue", NOW + 5000);
+    }
+
+    expect(session.phase.kind).toBe("over");
+    if (session.phase.kind !== "over") return;
+    expect(session.phase.outcome).toBe("tie");
+  });
+
+  it("still allows voting before max rounds is reached", () => {
+    const session = createImpostorSession({
+      playerIds: ["a", "b", "c"],
+      impostorCount: 1,
+      wordPool: POOL,
+      random: mulberry32(42),
+      now: NOW,
+      maxRounds: 2,
+    });
+
+    // Round 1: all hint, then vote.
+    playAllHints(session, NOW);
+    for (const playerId of session.playerIds) {
+      choose(session, playerId, "vote", NOW + 5000);
+    }
+
+    expect(session.phase.kind).toBe("vote");
   });
 });
 

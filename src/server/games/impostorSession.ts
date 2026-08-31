@@ -22,6 +22,12 @@ export const WORD_VIEW_MS = 10_000;
  */
 export const GUESS_TIME_MS = 30_000;
 
+/**
+ * Default maximum number of rounds before the game ends as a tie (the
+ * impostor was never caught). Host-adjustable from 1 to 100.
+ */
+export const DEFAULT_MAX_ROUNDS = 5;
+
 export type ImpostorPhase =
   | {
       kind: "hint";
@@ -48,11 +54,15 @@ export interface ImpostorSession {
   phase: ImpostorPhase;
   round: number;
   hints: Record<string, string>;
+  /** Per-round snapshots of hints (preserved across rounds). */
+  hintsByRound: Record<number, Record<string, string>>;
   choices: Record<string, "continue" | "vote">;
   votes: Record<string, string>;
   votedOutId: string | null;
   /** Server-enforced guess deadline offset (default GUESS_TIME_MS). */
   guessTimeMs: number;
+  /** Cap on rounds; reaching it ends the game as a tie. */
+  maxRounds: number;
 }
 
 function shuffle<T>(items: T[], random: () => number): T[] {
@@ -76,11 +86,14 @@ export function createImpostorSession(input: {
   wordViewMs?: number;
   /** Override the 30s guess timer (tests / host tuning). */
   guessTimeMs?: number;
+  /** Override the default 5-round cap (tests / host tuning). */
+  maxRounds?: number;
 }): ImpostorSession {
   const { playerIds, impostorCount, wordPool, random, now } = input;
   const hintTimeMs = input.hintTimeMs ?? HINT_TIME_MS;
   const wordViewMs = input.wordViewMs ?? WORD_VIEW_MS;
   const guessTimeMs = input.guessTimeMs ?? GUESS_TIME_MS;
+  const maxRounds = input.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const assignment = assignRoles(playerIds, impostorCount, wordPool, random);
   const turnOrder = shuffle(playerIds, random);
   return {
@@ -97,10 +110,12 @@ export function createImpostorSession(input: {
     },
     round: 1,
     hints: {},
+    hintsByRound: {},
     choices: {},
     votes: {},
     votedOutId: null,
     guessTimeMs,
+    maxRounds,
   };
 }
 
@@ -171,14 +186,26 @@ export function choose(
     (id) => session.choices[id] !== undefined
   );
   if (!allChose) return;
-  const voteWanted = session.playerIds.some(
+  // Majority decides (I-1): a vote is forced only when MORE players
+  // choose "vote" than "continue". Ties (and all-continue) keep playing.
+  const voteCount = session.playerIds.filter(
     (id) => session.choices[id] === "vote"
-  );
-  if (voteWanted) {
+  ).length;
+  const continueCount = session.playerIds.filter(
+    (id) => session.choices[id] === "continue"
+  ).length;
+  if (voteCount > continueCount) {
     session.phase = { kind: "vote" };
     return;
   }
-  // Everyone continued: another round of hints, same secret word.
+  // Everyone continued: check the round cap first. At max rounds the
+  // impostor was never caught, so the game ends as a tie.
+  if (session.round >= session.maxRounds) {
+    session.phase = { kind: "over", outcome: "tie" };
+    return;
+  }
+  // Another round of hints, same secret word.
+  session.hintsByRound[session.round] = { ...session.hints };
   session.round += 1;
   session.hints = {};
   session.choices = {};

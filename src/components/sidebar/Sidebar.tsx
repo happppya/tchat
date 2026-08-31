@@ -740,7 +740,7 @@ export default function Sidebar({
       <div className="px-3 py-2.5 border-b border-[var(--border-primary)] flex items-start justify-between">
         <div>
           <h1 className="text-[var(--accent)] glow text-lg font-normal tracking-wide">
-            tchat 1.2
+            tchat 1.3
           </h1>
           <div className="flex items-center gap-2 mt-0.5">
             <button

@@ -11,10 +11,11 @@ interface Props {
 
 const FIELDS: Record<
   Props["gameType"],
-  { key: keyof GameSettings; label: string; min?: number; step?: number; hint?: string }[]
+  { key: keyof GameSettings; label: string; min?: number; max?: number; step?: number; hint?: string }[]
 > = {
   impostor: [
     { key: "impostorCount", label: "number of slimes (impostors)", min: 1, hint: "default 1" },
+    { key: "maxRounds", label: "max rounds", min: 1, max: 100, hint: "default 5" },
     { key: "hintTimeMs", label: "seconds to give a hint", min: 5, step: 1, hint: "default 30 s" },
     { key: "wordViewMs", label: "seconds to view your word", min: 2, step: 1, hint: "default 10 s" },
     { key: "guessTimeMs", label: "seconds to guess after being voted out", min: 5, step: 1, hint: "default 30 s" },
@@ -23,6 +24,7 @@ const FIELDS: Record<
     { key: "promptsPerPlayer", label: "prompts per player", min: 2, hint: "default 4" },
     { key: "rounds", label: "rounds", min: 1, hint: "default 3" },
     { key: "answerTimeLimitMs", label: "seconds to answer", min: 5, step: 1, hint: "default 60 s" },
+    { key: "voteTimeMs", label: "seconds to vote per matchup", min: 5, step: 1, hint: "default 30 s" },
   ],
 };
 
@@ -36,7 +38,7 @@ export default function GameSettingsPanel({ gameType, settings, onChange }: Prop
       <div className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">
         host settings
       </div>
-      {FIELDS[gameType].map(({ key, label, min = 1, step = 1, hint }) => {
+      {FIELDS[gameType].map(({ key, label, min = 1, max, step = 1, hint }) => {
         const raw = settings[key];
         // ms fields are edited as seconds on the client.
         const display =
@@ -55,13 +57,15 @@ export default function GameSettingsPanel({ gameType, settings, onChange }: Prop
               data-testid={`set-${key}`}
               type="number"
               min={min}
+              max={max}
               step={step}
               value={String(display)}
               onChange={(e) => {
                 const n = Number(e.target.value);
                 if (!Number.isFinite(n) || n < min) return;
+                if (max !== undefined && n > max) return;
                 const val =
-                  key === "hintTimeMs" || key === "wordViewMs" || key === "guessTimeMs" || key === "answerTimeLimitMs"
+                  key === "hintTimeMs" || key === "wordViewMs" || key === "guessTimeMs" || key === "answerTimeLimitMs" || key === "voteTimeMs"
                     ? Math.round(n * 1000)
                     : n;
                 onChange({ ...settings, [key]: val });

@@ -375,11 +375,19 @@ export async function getAnonName(
   );
   if (row) return row.anon_name;
   const name = randomAnonName();
+  // INSERT OR IGNORE handles the race where another concurrent call
+  // (e.g. two game-join broadcasts resolving anon names in parallel)
+  // already inserted this row. Re-read so both callers return the same
+  // stored name, not whichever was generated locally.
   await db.run(
-    'INSERT INTO room_anon_names (room_id, user_id, anon_name) VALUES (?, ?, ?)',
+    'INSERT OR IGNORE INTO room_anon_names (room_id, user_id, anon_name) VALUES (?, ?, ?)',
     [roomId, userId, name]
   );
-  return name;
+  const stored = await db.get(
+    'SELECT anon_name FROM room_anon_names WHERE room_id = ? AND user_id = ?',
+    [roomId, userId]
+  );
+  return stored ? stored.anon_name : name;
 }
 
 /** User profile fields. */

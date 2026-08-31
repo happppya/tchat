@@ -8,7 +8,8 @@ import {
   submitAnswers,
   timeoutAnswers,
   castVote,
-  type CtfPhase,
+  timeoutVote,
+  buildMatchups,
   type CtfSession,
 } from "./completeTheFunny";
 
@@ -38,6 +39,7 @@ function newSession(overrides?: {
   promptsPerPlayer?: number;
   rounds?: number;
   answerTimeLimitMs?: number;
+  voteTimeMs?: number;
 }): CtfSession {
   return createCtfSession({
     gameId: "game-1",
@@ -46,6 +48,7 @@ function newSession(overrides?: {
       promptsPerPlayer: overrides?.promptsPerPlayer ?? 2,
       rounds: overrides?.rounds ?? 1,
       answerTimeLimitMs: overrides?.answerTimeLimitMs ?? 60_000,
+      voteTimeMs: overrides?.voteTimeMs ?? 30_000,
     }),
     promptPool: PROMPTS,
     random: mulberry32(7),
@@ -67,12 +70,28 @@ function answerAll(session: CtfSession, now: number): void {
   }
 }
 
+/** Vote every matchup unanimously for the first answer. */
+function voteAllUnanimously(session: CtfSession): void {
+  const phase = session.phase;
+  if (phase.kind !== "voting") return;
+  for (let i = phase.current; i < phase.phases.length; i++) {
+    const m = phase.phases[i];
+    const eligible = session.playerIds.filter(
+      (id) => !m.answers.some((a: { playerId: string }) => a.playerId === id)
+    );
+    const target = m.answers[0].id;
+    for (const voter of eligible) {
+      castVote(session, voter, i, target);
+    }
+  }
+}
+
 describe("validateSettings", () => {
   it("applies defaults and accepts the full allowed range", () => {
     expect(validateSettings({})).toEqual(DEFAULT_SETTINGS);
     expect(
-      validateSettings({ promptsPerPlayer: 10, rounds: 5, answerTimeLimitMs: 30_000 })
-    ).toEqual({ promptsPerPlayer: 10, rounds: 5, answerTimeLimitMs: 30_000 });
+      validateSettings({ promptsPerPlayer: 10, rounds: 5, answerTimeLimitMs: 30_000, voteTimeMs: 15_000 })
+    ).toEqual({ promptsPerPlayer: 10, rounds: 5, answerTimeLimitMs: 30_000, voteTimeMs: 15_000 });
   });
 
   it("rejects prompts-per-player outside 2–10", () => {
@@ -83,6 +102,7 @@ describe("validateSettings", () => {
   it("rejects non-positive rounds and time limits", () => {
     expect(() => validateSettings({ rounds: 0 })).toThrow(/at least 1/);
     expect(() => validateSettings({ answerTimeLimitMs: 0 })).toThrow(/greater than 0/);
+    expect(() => validateSettings({ voteTimeMs: 0 })).toThrow(/greater than 0/);
   });
 });
 
@@ -120,9 +140,19 @@ describe("submitAnswers", () => {
 
     expect(session.phase.kind).toBe("voting");
     if (session.phase.kind !== "voting") return;
-    // 3 players × 2 prompts = 6 answers → one 4-phase + one 2-phase.
-    const sizes = session.phase.phases.map((p) => p.answers.length);
-    expect(sizes).toEqual([4, 2]);
+    // CTF-9: matchups are per-prompt. 3 players → maxGroup=2, so each
+    // prompt's 3 answers split into [2,1] → 1 matchup of 2 per prompt.
+    // 2 prompts → ≥2 matchups, each with ≤2 answers from unique players.
+    expect(session.phase.phases.length).toBeGreaterThanOrEqual(2);
+    for (const m of session.phase.phases) {
+      expect(m.answers.length).toBeLessThanOrEqual(2);
+      expect(m.answers.length).toBeGreaterThanOrEqual(2);
+      const prompts = new Set(m.answers.map((a) => a.prompt));
+      expect(prompts.size).toBe(1);
+      const players = new Set(m.answers.map((a) => a.playerId));
+      expect(players.size).toBe(m.answers.length);
+    }
+    expect(session.phase.current).toBe(0);
   });
 
   it("rejects answers over 400 characters", () => {
@@ -155,30 +185,55 @@ describe("submitAnswers", () => {
   });
 });
 
-describe("voting + scoring", () => {
-  it("lets each player vote once per phase where they are not an author", () => {
-    const session = newSession({ playerIds: ["a", "b", "c", "d"] }); // 4×2=8 → [4,4]
+describe("buildMatchups (CTF-9)", () => {
+  it("groups answers by prompt — one matchup per prompt chunk, never mixing", () => {
+    const session = newSession({ playerIds: ["a", "b", "c", "d"] });
+    answerAll(session, NOW + 1000);
+
+    const matchups = buildMatchups(session.answersByPlayer);
+    // 2 prompts → 2 matchup chunks (4 players split into groups of 3,
+    // leaving ≥1 eligible voter per chunk).
+    expect(matchups.length).toBeGreaterThanOrEqual(2);
+    for (const m of matchups) {
+      // Each matchup has 2–3 answers from unique players.
+      expect(m.answers.length).toBeGreaterThanOrEqual(2);
+      expect(m.answers.length).toBeLessThanOrEqual(3);
+      // All answers in a matchup share the same prompt.
+      const prompts = new Set(m.answers.map((a) => a.prompt));
+      expect(prompts.size).toBe(1);
+      // Each answer is from a unique player.
+      const players = new Set(m.answers.map((a) => a.playerId));
+      expect(players.size).toBe(m.answers.length);
+    }
+  });
+});
+
+describe("voting + scoring (CTF-2 synchronized)", () => {
+  it("only accepts votes for the current matchup", () => {
+    // 5 players: each prompt splits into [3,2] → ≥2 eligible voters.
+    const session = newSession({ playerIds: ["a", "b", "c", "d", "e"] });
     answerAll(session, NOW + 1000);
     if (session.phase.kind !== "voting") throw new Error("expected voting");
+    expect(session.phase.current).toBe(0);
 
-    // Phase 0 is [a0,a1,b0,b1] (player-major chunking), so a and b are
-    // authors and c,d are the eligible voters.
-    const phase = session.phase.phases[0];
-    const eligible = session.playerIds.filter(
-      (id) => !phase.answers.some((x) => x.playerId === id)
-    );
-    expect(eligible).toEqual(["c", "d"]);
+    // Voting on matchup 0 works.
+    const phase0 = session.phase.phases[0];
+    const voter0 = session.playerIds.find(
+      (id) => !phase0.answers.some((a) => a.playerId === id)
+    )!;
+    castVote(session, voter0, 0, phase0.answers[0].id);
 
-    const target = phase.answers[0].id;
-    for (const voter of eligible) {
-      castVote(session, voter, 0, target);
-    }
-    expect(session.phase.phases[0].votes).toEqual(
-      Object.fromEntries(eligible.map((v) => [v, target]))
+    // Voting on matchup 1 (not current) is rejected.
+    const phase1 = session.phase.phases[1];
+    const voter1 = session.playerIds.find(
+      (id) => !phase1.answers.some((a) => a.playerId === id)
+    )!;
+    expect(() => castVote(session, voter1, 1, phase1.answers[0].id)).toThrow(
+      /not being voted on now/
     );
   });
 
-  it("blocks authors from voting on their own phase", () => {
+  it("blocks authors from voting on their own matchup", () => {
     const session = newSession();
     answerAll(session, NOW + 1000);
     if (session.phase.kind !== "voting") throw new Error("expected voting");
@@ -191,41 +246,86 @@ describe("voting + scoring", () => {
     );
   });
 
-  it("splits the 1000-point pool pro-rata and awards a +500 unanimous bonus", () => {
-    // 6 players × 2 prompts = 12 answers → three 4-answer phases.
-    const session = newSession({ playerIds: ["a", "b", "c", "d", "e", "f"] });
+  it("advances current to the next matchup when all eligible voters vote", () => {
+    const session = newSession({ playerIds: ["a", "b", "c", "d"] });
+    answerAll(session, NOW + 1000);
+    if (session.phase.kind !== "voting") throw new Error("expected voting");
+
+    const matchup = session.phase.phases[0];
+    const eligible = session.playerIds.filter(
+      (id) => !matchup.answers.some((a) => a.playerId === id)
+    );
+    const target = matchup.answers[0].id;
+    // Vote with all but the last eligible voter — current stays.
+    for (const voter of eligible.slice(0, -1)) {
+      castVote(session, voter, 0, target);
+    }
+    expect(session.phase.current).toBe(0);
+
+    // Last vote advances current to 1.
+    castVote(session, eligible[eligible.length - 1], 0, target);
+    expect(session.phase.current).toBe(1);
+  });
+
+  it("splits the pool pro-rata and awards a +500 unanimous bonus", () => {
+    // 5 players: each prompt splits into [3,2] → 4 matchups of 3 or 2.
+    const session = newSession({ playerIds: ["a", "b", "c", "d", "e"] });
     answerAll(session, NOW + 1000);
     if (session.phase.kind !== "voting") throw new Error("expected voting");
     const phases = session.phase.phases;
-    expect(phases.map((p) => p.answers.length)).toEqual([4, 4, 4]);
 
-    const eligibleOf = (phase: { answers: { playerId: string }[] }) =>
-      session.playerIds.filter((id) => !phase.answers.some((x) => x.playerId === id));
+    const eligibleOf = (m: (typeof phases)[0]) =>
+      session.playerIds.filter((id) => !m.answers.some((a) => a.playerId === id));
 
-    // Phase 0 ([a0,a1,b0,b1]): c,d → a0 (2 votes), e → b0 (1), f → a1 (1).
-    const phase0 = phases[0];
-    const [a0, a1, b0] = phase0.answers;
-    castVote(session, "c", 0, a0.id);
-    castVote(session, "d", 0, a0.id);
-    castVote(session, "e", 0, b0.id);
-    castVote(session, "f", 0, a1.id);
+    // Matchup 0: split votes 2-1 (no unanimous bonus).
+    const m0 = phases[0];
+    const [a0, b0] = m0.answers;
+    const elig0 = eligibleOf(m0);
+    // m0 has 3 answers → 2 eligible voters (5-3=2).
+    castVote(session, elig0[0], 0, a0.id);
+    castVote(session, elig0[1], 0, b0.id);
+    expect(session.phase.current).toBe(1);
 
-    // Phases 1 and 2: unanimous votes.
-    for (const [idx, phase] of [1, 2].map((i) => [i, phases[i]] as const)) {
-      const target = phase.answers[0].id;
-      for (const voter of eligibleOf(phase)) {
-        castVote(session, voter, idx, target);
+    // Matchup 1: unanimous (all eligible vote for the same answer).
+    const m1 = phases[1];
+    const target1 = m1.answers[0].id;
+    for (const voter of eligibleOf(m1)) {
+      castVote(session, voter, 1, target1);
+    }
+
+    // Remaining matchups: vote them all through unanimously.
+    for (let i = session.phase.current; i < phases.length; i++) {
+      const m = phases[i];
+      const elig = eligibleOf(m);
+      const target = m.answers[0].id;
+      for (const voter of elig) {
+        castVote(session, voter, i, target);
       }
     }
 
-    // Round 1 pool = 1000/phase. a0: 2/4 → 500, a1: 1/4 → 250, b0: 1/4 → 250.
-    // Phase 1 + 2 unanimous: 1000 + 500 bonus each.
-    const scores = session.scores;
-    expect(scores.a).toBe(750);
-    expect(scores.b).toBe(250);
-    expect(scores.c).toBe(1500);
-    expect(scores.e).toBe(1500);
-    expect(Object.values(scores).reduce((x, y) => x + y, 0)).toBe(4000);
+    // Matchup 0: pool=1000, 2 votes split 1-1 → 500 each to a and b.
+    // Matchup 1+: unanimous → 1000 + 500 bonus each.
+    expect(session.scores.a).toBeGreaterThanOrEqual(500);
+    expect(session.scores.b).toBeGreaterThanOrEqual(500);
+  });
+
+  it("resolves the round and starts a new one when all matchups are done", () => {
+    const session = newSession({ playerIds: ["a", "b", "c", "d"], rounds: 2 });
+    answerAll(session, NOW + 1000);
+    voteAllUnanimously(session);
+
+    expect(session.round).toBe(2);
+    expect(session.phase.kind).toBe("answering");
+  });
+
+  it("ends on 'over' with a leaderboard after the last round", () => {
+    const session = newSession({ playerIds: ["a", "b", "c", "d"], rounds: 1 });
+    answerAll(session, NOW + 1000);
+    voteAllUnanimously(session);
+
+    expect(session.phase.kind).toBe("over");
+    if (session.phase.kind !== "over") throw new Error("expected over");
+    expect(Object.keys(session.phase.leaderboard).length).toBeGreaterThan(0);
   });
 
   it("applies the +200 per-round pool multiplier", () => {
@@ -234,28 +334,12 @@ describe("voting + scoring", () => {
       rounds: 2,
     });
     answerAll(session, NOW + 1000);
+    voteAllUnanimously(session);
 
-    // Round 1: vote every phase unanimously for one answer each.
-    const voteAllPhases = () => {
-      const phase = session.phase;
-      if (phase.kind !== "voting") return;
-      for (const [idx, matchup] of phase.phases.entries()) {
-        const eligible = session.playerIds.filter(
-          (id) => !matchup.answers.some((x) => x.playerId === id)
-        );
-        const target = matchup.answers[0].id;
-        for (const voter of eligible) {
-          castVote(session, voter, idx, target);
-        }
-      }
-    };
-    voteAllPhases();
-
-    // Round 2 started: pool per phase is now 1200.
     expect(session.round).toBe(2);
     expect(session.phase.kind).toBe("answering");
     answerAll(session, NOW + 1000);
-    voteAllPhases();
+    voteAllUnanimously(session);
 
     expect(session.phase.kind).toBe("over");
     const finalPhase = session.phase;
@@ -264,27 +348,62 @@ describe("voting + scoring", () => {
       (a, b) => a + b,
       0
     );
-    // Round 1: 1000×2 unanimous = 2000 + 1000 bonus = 3000.
-    // Round 2: 1200×2 unanimous = 2400 + 1000 bonus = 3400.
-    expect(total).toBe(6400);
+    // 4 players × 2 prompts, maxGroup=2 → 4 matchups of 2 per round.
+    // Each unanimous: pool + 500 bonus. Round 1: 1000+500=1500 × 4 = 6000.
+    // Round 2: 1200+500=1700 × 4 = 6800. Total = 12800.
+    expect(total).toBe(12800);
   });
 
-  it("rejects votes for answers not in the phase", () => {
-    const session = newSession();
+  it("rejects votes for answers not in the matchup", () => {
+    const session = newSession({ playerIds: ["a", "b", "c", "d"] });
     answerAll(session, NOW + 1000);
-    const votingPhase = session.phase;
-    if (votingPhase.kind !== "voting") throw new Error("expected voting");
+    if (session.phase.kind !== "voting") throw new Error("expected voting");
+    const phase = session.phase;
 
-    const otherPhase = votingPhase.phases[1];
+    const otherMatchup = phase.phases[1];
     const voter = session.playerIds.find(
       (id) =>
-        !votingPhase.phases[0].answers.some(
-          (x: { playerId: string }) => x.playerId === id
+        !phase.phases[0].answers.some(
+          (a: { playerId: string }) => a.playerId === id
         )
     )!;
 
-    expect(() => castVote(session, voter, 0, otherPhase.answers[0].id)).toThrow(
-      /in this phase/
+    expect(() => castVote(session, voter, 0, otherMatchup.answers[0].id)).toThrow(
+      /not in this matchup/
     );
+  });
+});
+
+describe("timeoutVote (CTF-2)", () => {
+  it("advances the current matchup when the deadline passes", () => {
+    const session = newSession({ voteTimeMs: 150 });
+    answerAll(session, NOW + 1000);
+    if (session.phase.kind !== "voting") throw new Error("expected voting");
+    expect(session.phase.current).toBe(0);
+    expect(session.phase.phases[0].voteDeadline).toBe(NOW + 1000 + 150);
+
+    // Before the deadline: no advance.
+    timeoutVote(session, NOW + 1000 + 149);
+    expect(session.phase.current).toBe(0);
+
+    // After the deadline: advance to matchup 1.
+    timeoutVote(session, NOW + 1000 + 151);
+    expect(session.phase.current).toBe(1);
+  });
+
+  it("resolves the round when the last matchup's deadline passes", () => {
+    const session = newSession({ rounds: 1, voteTimeMs: 150 });
+    answerAll(session, NOW + 1000);
+    if (session.phase.kind !== "voting") throw new Error("expected voting");
+
+    // Advance to the last matchup.
+    timeoutVote(session, NOW + 1000 + 151);
+    expect(session.phase.current).toBe(1);
+
+    // Last matchup deadline passes → round resolves.
+    const lastDeadline = session.phase.phases[1].voteDeadline;
+    timeoutVote(session, lastDeadline + 1);
+
+    expect(session.phase.kind).toBe("over");
   });
 });

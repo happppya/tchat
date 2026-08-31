@@ -61,7 +61,8 @@ export interface WSMessage {
   status?: GameStatus;
   participantIds?: string[];
   inactivePlayerIds?: string[];
-  /** gameRole fields — dealt privately to one player. */
+  /** gameRole fields — dealt privately to one player. Also reused by the
+   *  Impostor over play view to reveal the word once the game is over. */
   role?: "impostor" | "crewmate";
   secretWord?: string;
   hint?: string;
@@ -74,12 +75,22 @@ export interface WSMessage {
   wordViewUntil?: number | null;
   hintDeadline?: number | null;
   hints?: Record<string, string>;
+  hintsByRound?: Record<string, Record<string, string>>;
+  /** Impostor: running continue-vs-vote choices, keyed by display identity. */
+  choices?: Record<string, "continue" | "vote">;
+  /** Impostor: running who-voted-for-whom, keyed by voter display identity. */
+  votes?: Record<string, string>;
   votedOutId?: string | null;
   outcome?: string | null;
+  /** Impostor over view: who the impostor(s) were (display names). */
+  impostorIds?: string[];
   /** Complete the Funny play-view fields. */
   deadline?: number | null;
   prompts?: Record<string, string[]>;
   answered?: Record<string, number>;
+  scores?: Record<string, number>;
   phases?: unknown;
+  currentMatchup?: number;
+  voteDeadline?: number | null;
   leaderboard?: Record<string, number> | null;
 }

@@ -28,6 +28,8 @@ describe("startGame", () => {
   it("moves the game from lobby to playing when the host starts it", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
+    manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
 
     const updated = manager.startGame("u1", game.gameId);
 
@@ -44,11 +46,46 @@ describe("startGame", () => {
   it("throws when the game is already in progress", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
+    manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
 
     expect(() => manager.startGame("u1", game.gameId)).toThrow(
       /already in progress/
     );
+  });
+
+  it("rejects starting an impostor game with fewer than 3 players", () => {
+    const manager = new GameManager();
+    // 1 player
+    const g1 = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
+    expect(() => manager.startGame("u1", g1.gameId)).toThrow(/at least 3 players/);
+
+    // 2 players
+    const g2 = manager.createGame({ gameType: "impostor", hostId: "u3", groupChatId: 555 });
+    manager.joinGame("u4", g2.gameId);
+    expect(() => manager.startGame("u3", g2.gameId)).toThrow(/at least 3 players/);
+  });
+
+  it("rejects starting a complete-the-funny game with fewer than 3 players", () => {
+    const manager = new GameManager();
+    const g1 = manager.createGame({ gameType: "complete-the-funny", hostId: "u1", groupChatId: 555 });
+    expect(() => manager.startGame("u1", g1.gameId)).toThrow(/at least 3 players/);
+
+    const g2 = manager.createGame({ gameType: "complete-the-funny", hostId: "u3", groupChatId: 555 });
+    manager.joinGame("u4", g2.gameId);
+    expect(() => manager.startGame("u3", g2.gameId)).toThrow(/at least 3 players/);
+  });
+
+  it("allows starting when exactly 3 players have joined", () => {
+    const manager = new GameManager();
+    const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
+    manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
+
+    const updated = manager.startGame("u1", game.gameId);
+
+    expect(updated.status).toBe("playing");
   });
 
   it("throws when the game does not exist or has ended", () => {
@@ -74,9 +111,10 @@ describe("joinGame", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
     manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
 
-    expect(() => manager.joinGame("u3", game.gameId)).toThrow(
+    expect(() => manager.joinGame("u4", game.gameId)).toThrow(
       /already in progress/
     );
   });
@@ -125,12 +163,13 @@ describe("softLeaveGame", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
     manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
 
     const updated = manager.softLeaveGame("u2", game.gameId);
 
     expect(updated.status).toBe("playing");
-    expect(updated.participantIds).toEqual(["u1", "u2"]);
+    expect(updated.participantIds).toEqual(["u1", "u2", "u3"]);
     expect(updated.inactivePlayerIds).toEqual(["u2"]);
   });
 
@@ -172,6 +211,7 @@ describe("rejoinGame", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
     manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
     manager.softLeaveGame("u2", game.gameId);
 
@@ -185,6 +225,7 @@ describe("rejoinGame", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
     manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
 
     expect(() => manager.rejoinGame("u9", game.gameId)).toThrow(
@@ -218,6 +259,7 @@ describe("hardLeaveGame", () => {
     const manager = new GameManager();
     const game = manager.createGame({ gameType: "impostor", hostId: "u1", groupChatId: 555 });
     manager.joinGame("u2", game.gameId);
+    manager.joinGame("u3", game.gameId);
     manager.startGame("u1", game.gameId);
     manager.hardLeaveGame("u2", game.gameId);
 

@@ -173,7 +173,7 @@ export default function ChatPage() {
   const wsIncomingRef = useRef<(msg: WSMessage) => void>(() => {});
   const { send } = useWebSocket((msg) => wsIncomingRef.current(msg));
 
-  const games = useMinigames(activeGCId, user?.id ?? null, send);
+  const games = useMinigames(activeGCId, user?.id ?? null, send, user?.username);
 
   const handleWSIncoming = useCallback(
     (msg: WSMessage) => {
@@ -586,6 +586,7 @@ export default function ChatPage() {
     activeOverlayGame,
     activePlayView,
     activeRole,
+    activeGameEnded,
     activeMeId,
     handleCreateGame,
     handleOpenGame,
@@ -756,6 +757,7 @@ export default function ChatPage() {
             activePlayView={activePlayView}
             activeRole={activeRole}
             activeMeId={activeMeId}
+            activeGameEnded={activeGameEnded}
             onGameHint={handleGameHint}
             onGameChoose={handleGameChoose}
             onGameVote={handleGameVote}

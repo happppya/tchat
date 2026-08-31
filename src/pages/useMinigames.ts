@@ -17,6 +17,8 @@ export interface MinigameHandle {
   activePlayView: ImpostorPlayView | CtfPlayView | null;
   /** Private role dealt to the viewer for the open overlay. */
   activeRole: GameRole | null;
+  /** True when the open game has ended (overlay stays open for result). */
+  activeGameEnded: boolean;
   /** The viewer's display identity — anon name in anonymous rooms, else id. */
   activeMeId: string;
   /** Consume a game frame (gameState/gamePlay/gameRole/gameEnded). Returns
@@ -44,7 +46,8 @@ export interface MinigameHandle {
 export function useMinigames(
   activeGCId: number | null,
   currentUserId: number | null,
-  send: (data: string) => void
+  send: (data: string) => void,
+  currentUsername?: string | null
 ): MinigameHandle {
   // Per-room active games from gameState broadcasts, plus whichever game's
   // overlay is currently open (soft leave closes it only).
@@ -61,6 +64,8 @@ export function useMinigames(
     Record<string, ImpostorPlayView | CtfPlayView>
   >({});
   const [roles, setRoles] = useState<Record<string, GameRole>>({});
+  /** Games that ended but whose overlay is still showing the result. */
+  const [endedGames, setEndedGames] = useState<Record<string, { outcome?: string }>>({});
 
   // Set when the user just created a game: open that game's overlay when its
   // first gameState arrives (spec §2.1: "lobby opens on send"). Only fires
@@ -96,7 +101,7 @@ export function useMinigames(
         if (
           pendingCreateOpenRef.current &&
           msg.groupChatId === activeGCId &&
-          inv.hostId === String(currentUserId ?? -1)
+          inv.hostId === (currentUsername ?? String(currentUserId ?? -1))
         ) {
           pendingCreateOpenRef.current = false;
           setActiveGame({ gameId: inv.gameId, roomId: msg.groupChatId });
@@ -124,9 +129,21 @@ export function useMinigames(
                 deadline: msg.deadline ?? null,
                 prompts: msg.prompts ?? {},
                 answered: msg.answered ?? {},
+                scores:
+                  msg.scores && typeof msg.scores === "object"
+                    ? (msg.scores as Record<string, number>)
+                    : undefined,
                 phases: Array.isArray(msg.phases)
                   ? (msg.phases as CtfPlayView["phases"])
                   : null,
+                currentMatchup:
+                  typeof msg.currentMatchup === "number"
+                    ? msg.currentMatchup
+                    : undefined,
+                voteDeadline:
+                  typeof msg.voteDeadline === "number"
+                    ? msg.voteDeadline
+                    : null,
                 leaderboard: msg.leaderboard ?? null,
               }
             : {
@@ -137,8 +154,18 @@ export function useMinigames(
                 wordViewUntil: msg.wordViewUntil ?? null,
                 hintDeadline: msg.hintDeadline ?? null,
                 hints: msg.hints ?? {},
+                hintsByRound: msg.hintsByRound ?? {},
+                choices: msg.choices ?? {},
+                votes: msg.votes ?? {},
                 votedOutId: msg.votedOutId ?? null,
                 outcome: msg.outcome ?? null,
+                impostorIds: Array.isArray(msg.impostorIds)
+                  ? (msg.impostorIds as string[])
+                  : undefined,
+                secretWord:
+                  typeof msg.secretWord === "string"
+                    ? msg.secretWord
+                    : undefined,
               };
         setPlayViews((prev) => ({ ...prev, [gid]: play }));
         setGamesByRoom((prev) => {
@@ -176,33 +203,26 @@ export function useMinigames(
       if (msg.type === "gameEnded") {
         const endedGameId = msg.gameId;
         if (endedGameId) {
+          // Mark as ended but keep the overlay + play view open so the
+          // player can see the result until they manually close it.
+          setEndedGames((prev) => ({
+            ...prev,
+            [endedGameId]: { outcome: msg.outcome ?? undefined },
+          }));
+          // Remove the invitation card from the room (game is over) but
+          // keep the game entry so the open overlay can still find it.
           setGamesByRoom((prev) => {
             const roomGames = prev[msg.groupChatId];
             if (!roomGames || !roomGames[endedGameId]) return prev;
-            const games = { ...roomGames };
-            delete games[endedGameId];
-            const next = { ...prev, [msg.groupChatId]: games };
-            if (Object.keys(games).length === 0) delete next[msg.groupChatId];
-            return next;
-          });
-          // Close the overlay if the ended game was open, and drop its play
-          // view + role (the server deletes ended-game data, so do we).
-          setActiveGame((cur) =>
-            cur && cur.gameId === endedGameId ? null : cur
-          );
-        }
-        if (endedGameId) {
-          setPlayViews((prev) => {
-            if (!prev[endedGameId]) return prev;
-            const next = { ...prev };
-            delete next[endedGameId];
-            return next;
-          });
-          setRoles((prev) => {
-            if (!prev[endedGameId]) return prev;
-            const next = { ...prev };
-            delete next[endedGameId];
-            return next;
+            // Mark as ended — the invitation card checks activeGameEnded
+            // to decide whether to render.
+            return {
+              ...prev,
+              [msg.groupChatId]: {
+                ...roomGames,
+                [endedGameId]: { ...roomGames[endedGameId], status: "playing" },
+              },
+            };
           });
         }
         return true;
@@ -231,9 +251,8 @@ export function useMinigames(
       const game = (gamesByRoom[activeGCId] ?? {})[gameId];
       if (!game) return;
       setActiveGame({ gameId, roomId: activeGCId });
-      const isParticipant = game.participantIds.includes(
-        String(currentUserId ?? -1)
-      );
+      const myIdentity = currentUsername ?? String(currentUserId ?? -1);
+      const isParticipant = game.participantIds.includes(myIdentity);
       send(
         JSON.stringify({
           type: isParticipant ? "gameRejoin" : "gameJoin",
@@ -299,12 +318,41 @@ export function useMinigames(
     [send]
   );
 
-  /** Close the overlay — a soft leave; invitation card stays so they can rejoin. */
-  const handleCloseGame = useCallback(() => setActiveGame(null), []);
+  /** Close the overlay — clears ended-game state, drops play view/role. */
+  const handleCloseGame = useCallback(() => {
+    setActiveGame((cur) => {
+      if (cur) {
+        const gid = cur.gameId;
+        setEndedGames((prev) => {
+          if (!prev[gid]) return prev;
+          const next = { ...prev };
+          delete next[gid];
+          return next;
+        });
+        setPlayViews((prev) => {
+          if (!prev[gid]) return prev;
+          const next = { ...prev };
+          delete next[gid];
+          return next;
+        });
+        setRoles((prev) => {
+          if (!prev[gid]) return prev;
+          const next = { ...prev };
+          delete next[gid];
+          return next;
+        });
+      }
+      return null;
+    });
+  }, []);
 
   // Invitation cards + the open overlay, both scoped to the active room.
   const activeRoomGames =
-    activeGCId !== null ? Object.values(gamesByRoom[activeGCId] ?? {}) : [];
+    activeGCId !== null
+      ? Object.values(gamesByRoom[activeGCId] ?? {}).filter(
+          (g) => !endedGames[g.gameId]
+        )
+      : [];
   const activeOverlayGame: GameInvitation | null =
     activeGame && activeGame.roomId === activeGCId
       ? (gamesByRoom[activeGame.roomId] ?? {})[activeGame.gameId] ?? null
@@ -316,14 +364,17 @@ export function useMinigames(
     activeOverlayGame ? playViews[activeOverlayGame.gameId] ?? null : null;
   const activeRole: GameRole | null =
     activeOverlayGame ? roles[activeOverlayGame.gameId] ?? null : null;
+  const activeGameEnded: boolean =
+    activeOverlayGame ? !!endedGames[activeOverlayGame.gameId] : false;
   const activeMeId =
-    activeRole?.anonName ?? (currentUserId != null ? String(currentUserId) : "");
+    activeRole?.anonName ?? currentUsername ?? (currentUserId != null ? String(currentUserId) : "");
 
   return {
     activeRoomGames,
     activeOverlayGame,
     activePlayView,
     activeRole,
+    activeGameEnded,
     activeMeId,
     handleGameFrame,
     handleCreateGame,

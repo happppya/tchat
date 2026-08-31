@@ -1,17 +1,17 @@
 /**
  * Complete the Funny engine (spec §6). Pure state machine: settings are
- * validated, prompts are dealt per round, answers are capped at 400 chars with
- * the timeout default injected, and voting phases are sized by `planMatchups`.
+ * validated, prompts are dealt per round, answers are capped at 400 chars
+ * with the timeout default injected, and voting is synchronized — everyone
+ * votes on the same matchup at the same time, advancing when all eligible
+ * voters have voted or the per-matchup voting deadline passes.
  *
- * Scoring (spec §6.4): each phase has a 1000-point pool (1000 + 200 × (round−1)),
- * split pro-rata by votes, with a +500 unanimous bonus when one answer gets
- * every vote. Tie votes split the pool evenly (resolved decision, see
- * note/minigame-requirements.md §6.6).
+ * Scoring (spec §6.4): each matchup has a 1000-point pool (1000 + 200 ×
+ * (round−1)), split pro-rata by votes, with a +500 unanimous bonus when one
+ * answer gets every vote.
  *
- * Note on matchups (spec §6.5): answers are chunked in player order into the
- * planned phase sizes, so a phase may mix prompts or contain two answers from
- * one player. The strict invariant is a whole-number phase count; "unique
- * prompt per phase" is a product nicety for a later pass.
+ * Matchups (CTF-9): built per prompt — each matchup shows one answer from
+ * each unique player who answered that prompt. Different prompts are never
+ * mixed into the same matchup.
  */
 
 /** Maximum characters allowed in an answer (spec §6.2). */
@@ -24,6 +24,8 @@ export const BASE_PHASE_POOL = 1000;
 export const POOL_INCREMENT_PER_ROUND = 200;
 /** Unanimous-bonus points (spec §6.4). */
 export const UNANIMOUS_BONUS = 500;
+/** Default per-matchup voting time limit (CTF-2). */
+export const VOTE_TIME_MS = 30_000;
 
 export interface CtfSettings {
   /** Prompts per player per round (P), 2–10, default 4. */
@@ -32,35 +34,55 @@ export interface CtfSettings {
   rounds: number;
   /** Per-round answer time limit, default 60 s. */
   answerTimeLimitMs: number;
+  /** Per-matchup voting time limit, default 30 s (CTF-2). */
+  voteTimeMs: number;
 }
 
 export const DEFAULT_SETTINGS: CtfSettings = {
   promptsPerPlayer: 4,
   rounds: 3,
   answerTimeLimitMs: 60_000,
+  voteTimeMs: VOTE_TIME_MS,
 };
 
 /**
- * Split the round's N×P answers into voting matchups of at most 4 (spec §6.5):
- * every phase has 2–4 answers, the phase count stays a whole number, and no
- * answer is left out. Remainder handling: 4k+3 → one 3-phase, 4k+2 → one
- * 2-phase, 4k+1 → one 3-phase + one 2-phase in place of a 4-phase.
+ * Build per-prompt matchups (CTF-9): for each prompt, split its answers into
+ * groups of at most ceil(playerCount/2), so at least half the players
+ * remain eligible voters. Different prompts are never mixed into the same
+ * matchup, and a single matchup never contains two answers from the same
+ * player.
  */
-export function planMatchups(
-  playerCount: number,
-  promptsPerPlayer: number
-): number[] {
-  const total = playerCount * promptsPerPlayer;
-  if (total < 2) {
+export function buildMatchups(
+  answersByPlayer: Record<string, CtfAnswer[]>
+): CtfMatchup[] {
+  // Collect answers grouped by prompt text, preserving player order.
+  const byPrompt = new Map<string, CtfAnswer[]>();
+  for (const playerId of Object.keys(answersByPlayer)) {
+    for (const answer of answersByPlayer[playerId]) {
+      if (answer.text === "") continue; // skip unanswered (shouldn't happen post-timeout)
+      const list = byPrompt.get(answer.prompt) ?? [];
+      list.push(answer);
+      byPrompt.set(answer.prompt, list);
+    }
+  }
+  // Max group size: ceil(playerCount / 2) so at least half the players
+  // remain eligible voters (they aren't authors of every matchup). With
+  // 3 players → groups of 2 (1 eligible voter); 4 → groups of 2; 6 → 3.
+  const playerCount = Object.keys(answersByPlayer).length;
+  const maxGroup = Math.max(2, Math.ceil(playerCount / 2));
+  const matchups: CtfMatchup[] = [];
+  for (const [prompt, answers] of byPrompt) {
+    if (answers.length < 2) continue; // need ≥2 answers to vote on
+    for (let i = 0; i < answers.length; i += maxGroup) {
+      const chunk = answers.slice(i, i + maxGroup);
+      if (chunk.length < 2) continue;
+      matchups.push({ prompt, answers: chunk, votes: {}, voteDeadline: 0 });
+    }
+  }
+  if (matchups.length === 0) {
     throw new Error("need at least 2 answers to vote on");
   }
-  const fours = Math.floor(total / 4);
-  const remainder = total % 4;
-  if (remainder === 0) return Array(fours).fill(4);
-  if (remainder === 3) return [...Array(fours).fill(4), 3];
-  if (remainder === 2) return [...Array(fours).fill(4), 2];
-  // remainder 1: 4k+1 = 4(k−1) + 3 + 2.
-  return [...Array(fours - 1).fill(4), 3, 2];
+  return matchups;
 }
 
 export function validateSettings(settings: Partial<CtfSettings>): CtfSettings {
@@ -69,6 +91,7 @@ export function validateSettings(settings: Partial<CtfSettings>): CtfSettings {
   const rounds = settings.rounds ?? DEFAULT_SETTINGS.rounds;
   const answerTimeLimitMs =
     settings.answerTimeLimitMs ?? DEFAULT_SETTINGS.answerTimeLimitMs;
+  const voteTimeMs = settings.voteTimeMs ?? DEFAULT_SETTINGS.voteTimeMs;
   if (
     !Number.isInteger(promptsPerPlayer) ||
     promptsPerPlayer < 2 ||
@@ -82,7 +105,10 @@ export function validateSettings(settings: Partial<CtfSettings>): CtfSettings {
   if (!Number.isFinite(answerTimeLimitMs) || answerTimeLimitMs <= 0) {
     throw new Error("answerTimeLimitMs must be greater than 0");
   }
-  return { promptsPerPlayer, rounds, answerTimeLimitMs };
+  if (!Number.isFinite(voteTimeMs) || voteTimeMs <= 0) {
+    throw new Error("voteTimeMs must be greater than 0");
+  }
+  return { promptsPerPlayer, rounds, answerTimeLimitMs, voteTimeMs };
 }
 
 export interface CtfAnswer {
@@ -96,11 +122,19 @@ export interface CtfMatchup {
   prompt: string;
   answers: CtfAnswer[];
   votes: Record<string, string>;
+  /** Per-matchup voting deadline (CTF-2), set when voting begins on it. */
+  voteDeadline: number;
 }
 
 export type CtfPhase =
   | { kind: "answering"; round: number; deadline: number }
-  | { kind: "voting"; round: number; phases: CtfMatchup[] }
+  | {
+      kind: "voting";
+      round: number;
+      phases: CtfMatchup[];
+      /** Which matchup everyone is voting on now (CTF-2 synchronized). */
+      current: number;
+    }
   | { kind: "over"; leaderboard: Record<string, number> };
 
 export interface CtfSession {
@@ -172,23 +206,21 @@ function allAnswered(session: CtfSession): boolean {
   );
 }
 
-function startVoting(session: CtfSession): void {
-  const sizes = planMatchups(
-    session.playerIds.length,
-    session.settings.promptsPerPlayer
-  );
-  const all: CtfAnswer[] = [];
-  for (const playerId of session.playerIds) {
-    all.push(...session.answersByPlayer[playerId]);
+function startVoting(session: CtfSession, now: number): void {
+  const phases = buildMatchups(session.answersByPlayer);
+  // Set the deadline only for the first matchup — subsequent matchups
+  // get their deadline when they become current (advanceCurrentMatchup).
+  // Setting all upfront would mean later matchups' deadlines expire while
+  // players are still voting on earlier ones.
+  if (phases.length > 0) {
+    phases[0].voteDeadline = now + session.settings.voteTimeMs;
   }
-  const phases: CtfMatchup[] = [];
-  let offset = 0;
-  for (const size of sizes) {
-    const chunk = all.slice(offset, offset + size);
-    offset += size;
-    phases.push({ prompt: chunk[0].prompt, answers: chunk, votes: {} });
-  }
-  session.phase = { kind: "voting", round: session.round, phases };
+  session.phase = {
+    kind: "voting",
+    round: session.round,
+    phases,
+    current: 0,
+  };
 }
 
 export function submitAnswers(
@@ -210,7 +242,7 @@ export function submitAnswers(
     slots[i].text = text;
   }
   if (allAnswered(session)) {
-    startVoting(session);
+    startVoting(session, _now);
   }
 }
 
@@ -225,7 +257,7 @@ export function timeoutAnswers(
     if (answer.text === "") answer.text = RAN_OUT_OF_TIME;
   }
   if (allAnswered(session)) {
-    startVoting(session);
+    startVoting(session, now);
   }
 }
 
@@ -235,15 +267,33 @@ function eligibleVoters(session: CtfSession, matchup: CtfMatchup): string[] {
   );
 }
 
-function allPhasesResolved(session: CtfSession): boolean {
+/** True once every eligible voter has voted on the current matchup. */
+function currentMatchupResolved(session: CtfSession): boolean {
   if (session.phase.kind !== "voting") return false;
-  for (const matchup of session.phase.phases) {
-    const eligible = eligibleVoters(session, matchup);
-    if (!eligible.every((id) => matchup.votes[id] !== undefined)) {
-      return false;
-    }
+  const matchup = session.phase.phases[session.phase.current];
+  if (!matchup) return false;
+  const eligible = eligibleVoters(session, matchup);
+  return eligible.every((id) => matchup.votes[id] !== undefined);
+}
+
+/**
+ * Advance past the current matchup to the next one (CTF-2 synchronized).
+ * Scoring happens at round-end (resolveRound) so this just moves the index.
+ * Returns the kind of the new phase ("voting" if more matchups, "over"/
+ * "answering" if the round resolved).
+ */
+function advanceCurrentMatchup(session: CtfSession, now: number): void {
+  if (session.phase.kind !== "voting") return;
+  const next = session.phase.current + 1;
+  if (next < session.phase.phases.length) {
+    // More matchups to vote on — advance the shared index and set a
+    // fresh deadline for the new current matchup.
+    session.phase.current = next;
+    session.phase.phases[next].voteDeadline = now + session.settings.voteTimeMs;
+    return;
   }
-  return true;
+  // All matchups resolved — score the round.
+  resolveRound(session);
 }
 
 function resolveRound(session: CtfSession): void {
@@ -263,8 +313,8 @@ function resolveRound(session: CtfSession): void {
       session.scores[answer.playerId] =
         (session.scores[answer.playerId] ?? 0) + points;
     }
-    // Unanimous: a single answer received every vote in the phase.
-    if (counts.size === 1) {
+    // Unanimous: a single answer received every vote in the matchup.
+    if (counts.size === 1 && votes.length === eligibleVoters(session, matchup).length) {
       const answer = matchup.answers.find(
         (a) => a.id === counts.keys().next().value
       )!;
@@ -295,6 +345,18 @@ function resolveRound(session: CtfSession): void {
   }
 }
 
+/**
+ * Server-enforced per-matchup voting timeout (CTF-2): when the current
+ * matchup's deadline passes, advance to the next matchup even if not
+ * everyone voted (stragglers' votes are simply not counted).
+ */
+export function timeoutVote(session: CtfSession, now: number): void {
+  if (session.phase.kind !== "voting") return;
+  const matchup = session.phase.phases[session.phase.current];
+  if (!matchup || now < matchup.voteDeadline) return;
+  advanceCurrentMatchup(session, now);
+}
+
 export function castVote(
   session: CtfSession,
   playerId: string,
@@ -304,19 +366,24 @@ export function castVote(
   if (session.phase.kind !== "voting") {
     throw new Error("not the voting phase");
   }
+  // CTF-2: votes only count for the current shared matchup. Reject stale
+  // votes for other matchups so a late/slow client can't vote ahead.
+  if (phaseIndex !== session.phase.current) {
+    throw new Error("that matchup is not being voted on now");
+  }
   const matchup = session.phase.phases[phaseIndex];
   if (!matchup) {
-    throw new Error("unknown voting phase");
+    throw new Error("unknown voting matchup");
   }
   requireParticipant(session, playerId);
   if (!matchup.answers.some((a) => a.id === answerId)) {
-    throw new Error("answer is not in this phase");
+    throw new Error("answer is not in this matchup");
   }
   if (matchup.answers.some((a) => a.playerId === playerId)) {
     throw new Error("players cannot vote on their own answer");
   }
   matchup.votes[playerId] = answerId;
-  if (allPhasesResolved(session)) {
-    resolveRound(session);
+  if (currentMatchupResolved(session)) {
+    advanceCurrentMatchup(session, Date.now());
   }
 }

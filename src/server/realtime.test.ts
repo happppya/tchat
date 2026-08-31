@@ -17,6 +17,7 @@ import type { Session } from "./core/auth";
 const ALICE: Session = { userId: 1, username: "alice", isAdmin: false, expires: Date.now() + 60_000 };
 const BOB: Session = { userId: 2, username: "bob", isAdmin: false, expires: Date.now() + 60_000 };
 const CAROL: Session = { userId: 3, username: "carol", isAdmin: false, expires: Date.now() + 60_000 };
+const DAVE: Session = { userId: 4, username: "dave", isAdmin: false, expires: Date.now() + 60_000 };
 
 let db: DB;
 let wss: WebSocketServer;
@@ -26,7 +27,14 @@ let gameCleanup: { endGamesInRoom: (groupChatId: number) => void };
 const pendingSessions: Array<Session | null> = [];
 
 beforeEach(async () => {
-  if (!db) db = await openDatabase(":memory:");
+  if (!db) {
+    db = await openDatabase(":memory:");
+    // Seed the users that the test sessions reference.
+    await db.exec(
+      "INSERT INTO users (username, password_hash) VALUES " +
+      "('alice', 'x'), ('bob', 'x'), ('carol', 'x'), ('dave', 'x')"
+    );
+  }
   // Fresh state per test.
   await db.exec(
     "DELETE FROM messages; DELETE FROM group_chats; DELETE FROM room_members;"
@@ -138,30 +146,74 @@ async function lobbyWithAliceAndBob(): Promise<{
 }
 
 /**
+ * Create a lobby game in room 555 with three players (alice hosts, bob +
+ * carol join). Returns live sockets plus the gameId; all join broadcasts are
+ * consumed. Needed because minigames require at least 3 players to start.
+ */
+async function lobbyWithThreePlayers(): Promise<{
+  alice: WebSocket;
+  bob: WebSocket;
+  carol: WebSocket;
+  gameId: string;
+}> {
+  const alice = await connect(ALICE);
+  alice.send(
+    JSON.stringify({ type: "gameCreate", gameType: "impostor", groupChatId: 555 })
+  );
+  const created = await nextFrame(alice);
+
+  await db.run("INSERT INTO room_members (user_id, room_id) VALUES (2, 555)");
+  await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
+  const bob = await connect(BOB);
+  const carol = await connect(CAROL);
+  const joinWaiters: Record<string, Promise<Record<string, any>>[]> = {
+    "1": [nextFrame(alice), nextFrame(alice)],
+    "2": [nextFrame(bob), nextFrame(bob)],
+    "3": [nextFrame(carol), nextFrame(carol)],
+  };
+  bob.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
+  carol.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
+  for (const waiters of Object.values(joinWaiters)) {
+    for (const frame of waiters) {
+      expect((await frame).type).toBe("gameState");
+    }
+  }
+
+  return { alice, bob, carol, gameId: created.gameId };
+}
+
+/**
  * Start an impostor game (host-only) and consume each player's private role
  * frame plus the gamePlay broadcast, returning all of them.
  */
 async function startGameFor(
   alice: WebSocket,
   bob: WebSocket,
+  carol: WebSocket,
   gameId: string,
   settings?: Record<string, unknown>
 ): Promise<{
   roleAlice: Record<string, any>;
   roleBob: Record<string, any>;
+  roleCarol: Record<string, any>;
   playAlice: Record<string, any>;
   playBob: Record<string, any>;
+  playCarol: Record<string, any>;
 }> {
   const roleAlice = nextFrame(alice);
   const roleBob = nextFrame(bob);
+  const roleCarol = nextFrame(carol);
   const playAlice = nextFrame(alice);
   const playBob = nextFrame(bob);
+  const playCarol = nextFrame(carol);
   alice.send(JSON.stringify({ type: "gameStart", gameId, settings }));
   return {
     roleAlice: await roleAlice,
     roleBob: await roleBob,
+    roleCarol: await roleCarol,
     playAlice: await playAlice,
     playBob: await playBob,
+    playCarol: await playCarol,
   };
 }
 
@@ -337,15 +389,39 @@ describe("game protocol", () => {
     expect(state.type).toBe("gameState");
     expect(state.gameId).toBeTruthy();
     expect(state.gameType).toBe("impostor");
-    expect(state.hostId).toBe("1");
+    expect(state.hostId).toBe("alice");
     expect(state.groupChatId).toBe(555);
     expect(state.status).toBe("lobby");
-    expect(state.participantIds).toEqual(["1"]);
+    expect(state.participantIds).toEqual(["alice"]);
     expect(state.inactivePlayerIds).toEqual([]);
 
     // Non-members of the room must not see the invitation.
     await new Promise((r) => setTimeout(r, 150));
     expect(bobFrames).toHaveLength(0);
+  });
+
+  it("shows participant usernames (not raw user ids) in non-anonymous rooms", async () => {
+    const alice = await connect(ALICE);
+    alice.send(
+      JSON.stringify({
+        type: "gameCreate", gameType: "impostor", groupChatId: 555 })
+    );
+    const created = await nextFrame(alice);
+
+    // Non-anonymous room: hostId and participantIds are usernames.
+    expect(created.hostId).toBe("alice");
+    expect(created.participantIds).toEqual(["alice"]);
+
+    // Bob joins — the roster broadcast shows both usernames.
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (2, 555)");
+    const bob = await connect(BOB);
+    const atBob = nextFrame(bob);
+    const atAlice = nextFrame(alice);
+    bob.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
+    const bobState = await atBob;
+    expect(bobState.participantIds).toEqual(["alice", "bob"]);
+    const aliceState = await atAlice;
+    expect(aliceState.participantIds).toEqual(["alice", "bob"]);
   });
 
   it("rejects game creation from non-members", async () => {
@@ -385,10 +461,10 @@ describe("game protocol", () => {
 
     const bobState = await atBob;
     expect(bobState.type).toBe("gameState");
-    expect(bobState.participantIds).toEqual(["1", "2"]);
+    expect(bobState.participantIds).toEqual(["alice", "bob"]);
     const aliceState = await atAlice;
     expect(aliceState.type).toBe("gameState");
-    expect(aliceState.participantIds).toEqual(["1", "2"]);
+    expect(aliceState.participantIds).toEqual(["alice", "bob"]);
   });
 
   it("rejects joins from non-members of the game's room", async () => {
@@ -436,7 +512,17 @@ describe("game protocol", () => {
     await atAliceJoin;
 
     // Start deals private roles, then broadcasts the playing state.
-    const { roleBob, roleAlice } = await startGameFor(alice, bob, created.gameId);
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
+    const carol = await connect(CAROL);
+    const atCarolJoin = nextFrame(carol);
+    const atAliceCarolJoin = nextFrame(alice);
+    const atBobCarolJoin = nextFrame(bob);
+    carol.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
+    await atCarolJoin;
+    await atAliceCarolJoin;
+    await atBobCarolJoin;
+
+    const { roleBob, roleAlice } = await startGameFor(alice, bob, carol, created.gameId);
     expect(roleAlice.type).toBe("gameRole");
     expect(roleBob.type).toBe("gameRole");
   });
@@ -463,27 +549,14 @@ describe("game protocol", () => {
   });
 
   it("blocks new players from joining after the game has started", async () => {
-    const alice = await connect(ALICE);
-    alice.send(
-      JSON.stringify({ type: "gameCreate", gameType: "impostor", groupChatId: 555 })
-    );
-    const created = await nextFrame(alice);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
-    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (2, 555)");
-    const bob = await connect(BOB);
-    const atBobJoin = nextFrame(bob);
-    const atAliceJoin = nextFrame(alice);
-    bob.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
-    await atBobJoin;
-    await atAliceJoin;
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (4, 555)");
+    const dave = await connect(DAVE);
+    dave.send(JSON.stringify({ type: "gameJoin", gameId }));
 
-    await startGameFor(alice, bob, created.gameId);
-
-    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
-    const carol = await connect(CAROL);
-    carol.send(JSON.stringify({ type: "gameJoin", gameId: created.gameId }));
-
-    const errFrame = await nextFrame(carol);
+    const errFrame = await nextFrame(dave);
     expect(errFrame.type).toBe("error");
     expect(errFrame.messageText).toContain("already in progress");
   });
@@ -497,15 +570,15 @@ describe("game protocol", () => {
 
     const bobState = await atBob;
     expect(bobState.type).toBe("gameState");
-    expect(bobState.participantIds).toEqual(["1", "2"]);
-    expect(bobState.inactivePlayerIds).toEqual(["2"]);
+    expect(bobState.participantIds).toEqual(["alice", "bob"]);
+    expect(bobState.inactivePlayerIds).toEqual(["bob"]);
     const aliceState = await atAlice;
-    expect(aliceState.inactivePlayerIds).toEqual(["2"]);
+    expect(aliceState.inactivePlayerIds).toEqual(["bob"]);
   });
 
   it("rejoins a soft-leaver mid-play and re-activates them", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const softBob = nextFrame(bob);
     const softAlice = nextFrame(alice);
@@ -525,23 +598,26 @@ describe("game protocol", () => {
   });
 
   it("hard-leaves a player mid-play and removes them from the roster", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const atBob = nextFrame(bob);
     const atAlice = nextFrame(alice);
+    const atCarol = nextFrame(carol);
     bob.send(JSON.stringify({ type: "gameHardLeave", gameId }));
 
     const bobState = await atBob;
     expect(bobState.status).toBe("playing");
-    expect(bobState.participantIds).toEqual(["1"]);
+    expect(bobState.participantIds).toEqual(["alice", "carol"]);
     const aliceState = await atAlice;
-    expect(aliceState.participantIds).toEqual(["1"]);
+    expect(aliceState.participantIds).toEqual(["alice", "carol"]);
+    const carolState = await atCarol;
+    expect(carolState.participantIds).toEqual(["alice", "carol"]);
   });
 
   it("prevents a hard-leaver from rejoining", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const atBob = nextFrame(bob);
     const atAlice = nextFrame(alice);
@@ -617,7 +693,7 @@ describe("game protocol", () => {
   });
 
   it("never leaks real user ids in anonymous rooms (anon names instead)", async () => {
-    // Anonymous room 666; both players are members.
+    // Anonymous room 666; alice is a member.
     await db.run("INSERT INTO group_chats (id, name, is_anonymous) VALUES (666, 'Anon Room', 1)");
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (1, 666)");
     const alice = await connect(ALICE);
@@ -634,13 +710,18 @@ describe("game protocol", () => {
     expect(created.hostId).toMatch(/^Guest_/);
     expect(JSON.stringify(created)).not.toContain('"1"');
 
+    // Bob and carol become members and join the lobby.
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (2, 666)");
     const bob = await connect(BOB);
-    const joinWaiters: { [k: string]: Promise<Record<string, any>>[] } = {
-      "1": [nextFrame(alice)],
-      "2": [nextFrame(bob)],
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 666)");
+    const carol = await connect(CAROL);
+    const joinWaiters: Record<string, Promise<Record<string, any>>[]> = {
+      "1": [nextFrame(alice), nextFrame(alice)],
+      "2": [nextFrame(bob), nextFrame(bob)],
+      "3": [nextFrame(carol), nextFrame(carol)],
     };
     bob.send(JSON.stringify({ type: "gameJoin", gameId }));
+    carol.send(JSON.stringify({ type: "gameJoin", gameId }));
     for (const waiters of Object.values(joinWaiters)) {
       for (const frame of waiters) {
         expect((await frame).type).toBe("gameState");
@@ -651,13 +732,17 @@ describe("game protocol", () => {
     // they can find themselves among the anonymized participant lists.
     const roleAlice = nextFrame(alice);
     const roleBob = nextFrame(bob);
+    const roleCarol = nextFrame(carol);
     const playAlice = nextFrame(alice);
     const playBob = nextFrame(bob);
+    const playCarol = nextFrame(carol);
     alice.send(JSON.stringify({ type: "gameStart", gameId }));
     const aliceRole = await roleAlice;
     const bobRole = await roleBob;
+    await roleCarol;
     const alicePlay = await playAlice;
     await playBob;
+    await playCarol;
     expect(aliceRole.type).toBe("gameRole");
     expect(aliceRole.anonName).toMatch(/^Guest_/);
     expect(bobRole.anonName).toMatch(/^Guest_/);
@@ -666,15 +751,15 @@ describe("game protocol", () => {
     expect(alicePlay.type).toBe("gamePlay");
     expect(alicePlay.turnPlayerId).toMatch(/^Guest_/);
     const anonView = JSON.stringify({ ...alicePlay, anonNames: [aliceRole.anonName, bobRole.anonName] });
-    expect(anonView).not.toMatch(/"(1|2)"/);
+    expect(anonView).not.toMatch(/"(1|2|3)"/);
   });
 
   it("deals private roles on start without leaking the word to the room", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    const { roleAlice, roleBob } = await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    const { roleAlice, roleBob, roleCarol } = await startGameFor(alice, bob, carol, gameId);
 
     // Each player receives exactly one of secretWord / hint, privately.
-    for (const role of [roleAlice, roleBob]) {
+    for (const role of [roleAlice, roleBob, roleCarol]) {
       expect(role.type).toBe("gameRole");
       expect(role.gameId).toBe(gameId);
       expect(["crewmate", "impostor"]).toContain(role.role);
@@ -685,17 +770,17 @@ describe("game protocol", () => {
   });
 
   it("advances turns on hints and rejects off-turn submissions", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    const { playAlice } = await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    const { playAlice } = await startGameFor(alice, bob, carol, gameId);
 
-    // Alice is the host, so her socket is player "1"; bob is "2".
-    const sockets: Record<string, WebSocket> = { "1": alice, "2": bob };
+    // Sockets keyed by display name (the server broadcasts usernames).
+    const sockets: Record<string, WebSocket> = { alice, bob, carol };
     const play = playAlice;
     expect(play.type).toBe("gamePlay");
     const turn = play.turnPlayerId;
 
     // Off-turn hint is rejected.
-    const offTurn = turn === "1" ? bob : alice;
+    const offTurn = turn === "alice" ? bob : alice;
     offTurn.send(
       JSON.stringify({ type: "gameHint", gameId, hint: "jumping the queue" })
     );
@@ -726,7 +811,7 @@ describe("game protocol", () => {
     const bob = await connect(BOB);
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
     const carol = await connect(CAROL);
-    const sockets: Record<string, WebSocket> = { "1": alice, "2": bob, "3": carol };
+    const sockets: Record<string, WebSocket> = { alice, bob, carol };
     // Bob and carol join the lobby. Every member receives a gameState per
     // join (both bob and carol are already room members), so each player's
     // socket sees a deterministic frame *count* of 2 even though delivery
@@ -753,9 +838,9 @@ describe("game protocol", () => {
     const playCarol = nextFrame(carol);
     alice.send(JSON.stringify({ type: "gameStart", gameId }));
     const roles = {
-      "1": await roleAlice,
-      "2": await roleBob,
-      "3": await roleCarol,
+      alice: await roleAlice,
+      bob: await roleBob,
+      carol: await roleCarol,
     };
     const firstPlay = await playAlice;
     await playBob;
@@ -780,28 +865,54 @@ describe("game protocol", () => {
     }
     expect(play.phase).toBe("vote");
 
-    // Alice and carol vote for bob ("2"); bob votes alice. Bob is voted out.
-    alice.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "2" }));
-    bob.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "1" }));
-    carol.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "2" }));
+    // Alice and carol vote for bob; bob votes alice. Bob is voted out.
+    alice.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "bob" }));
+    bob.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "alice" }));
+    carol.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "bob" }));
 
-    // If bob is the impostor, he gets a guess chance; otherwise the game ends
-    // immediately. Either way a gameEnded frame with an outcome arrives.
-    if (roles["2"].role === "impostor") {
-      const guessPlay = await nextFrame(alice);
-      expect(guessPlay.type).toBe("gamePlay");
-      expect(guessPlay.phase).toBe("guess");
+    // Each vote now broadcasts a live tally (I-1). The three votes are
+    // sent synchronously, so their async broadcasts can interleave — collect
+    // all frames until the phase resolves past "vote".
+    let resolved = await nextFrame(alice);
+    while (resolved.type === "gamePlay" && resolved.phase === "vote") {
+      resolved = await nextFrame(alice);
+    }
+    // If bob is the impostor, he gets a guess chance; otherwise the game
+    // ends immediately. I-5: the final "over" play view is broadcast first
+    // (clients render the result screen), then a gameEnded frame closes it.
+    if (roles.bob.role === "impostor") {
+      expect(resolved.type).toBe("gamePlay");
+      expect(resolved.phase).toBe("guess");
       bob.send(
         JSON.stringify({ type: "gameGuess", gameId, guess: "definitely not it" })
       );
+      // The guess resolves to over → gameEnded. Interleaved vote handlers
+      // can re-broadcast the guess phase after the result, so drain every
+      // gamePlay frame until the "over" view arrives.
+      resolved = await nextFrame(alice);
+      while (resolved.type === "gamePlay" && resolved.phase !== "over") {
+        resolved = await nextFrame(alice);
+      }
     }
-    const ended = await nextFrame(alice);
+    expect(resolved.type).toBe("gamePlay");
+    expect(resolved.phase).toBe("over");
+    expect(["crewmates-win", "crewmates-lose", "draw"]).toContain(resolved.outcome);
+    // The over view is followed by gameEnded (may be the next frame, or
+    // there may be a stray late vote broadcast in between).
+    let ended = await nextFrame(alice);
+    while (ended.type === "gamePlay") {
+      ended = await nextFrame(alice);
+    }
     expect(ended.type).toBe("gameEnded");
     expect(["crewmates-win", "crewmates-lose"]).toContain(ended.outcome);
 
-    // The game is gone: play actions now fail.
+    // The game is gone: play actions now fail. Drain any stray late-vote
+    // gamePlay frames that may arrive after gameEnded (async interleave).
     alice.send(JSON.stringify({ type: "gameHint", gameId, hint: "too late" }));
-    const errFrame = await nextFrame(alice);
+    let errFrame = await nextFrame(alice);
+    while (errFrame.type === "gamePlay") {
+      errFrame = await nextFrame(alice);
+    }
     expect(errFrame.type).toBe("error");
     expect(errFrame.messageText).toContain("not found or has ended");
   });
@@ -818,7 +929,7 @@ describe("game protocol", () => {
     const bob = await connect(BOB);
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
     const carol = await connect(CAROL);
-    const sockets: Record<string, WebSocket> = { "1": alice, "2": bob, "3": carol };
+    const sockets: Record<string, WebSocket> = { alice, bob, carol };
     const joinWaiters: Record<string, Promise<Record<string, any>>[]> = {
       "1": [nextFrame(alice), nextFrame(alice)],
       "2": [nextFrame(bob), nextFrame(bob)],
@@ -842,9 +953,9 @@ describe("game protocol", () => {
       JSON.stringify({ type: "gameStart", gameId, settings: { guessTimeMs: 150 } })
     );
     const roles: Record<string, Record<string, any>> = {
-      "1": await roleAlice,
-      "2": await roleBob,
-      "3": await roleCarol,
+      alice: await roleAlice,
+      bob: await roleBob,
+      carol: await roleCarol,
     };
     const impostor = Object.keys(roles).find((id) => roles[id].role === "impostor")!;
     let play = await playAlice;
@@ -863,17 +974,38 @@ describe("game protocol", () => {
     }
     expect(play.phase).toBe("vote");
 
-    // Everyone votes for the impostor, so they're voted out → guess phase.
-    const guessPlay = nextFrame(alice);
+    // Everyone votes for the impostor (by display name), so they're voted
+    // out. Each vote now broadcasts a live tally (I-1). The three votes
+    // are sent synchronously, so their async broadcasts can interleave —
+    // drain all vote-phase frames until the phase changes to guess.
     alice.send(JSON.stringify({ type: "gameVote", gameId, votedForId: impostor }));
     bob.send(JSON.stringify({ type: "gameVote", gameId, votedForId: impostor }));
     carol.send(JSON.stringify({ type: "gameVote", gameId, votedForId: impostor }));
-    const guessFrame = await guessPlay;
+    let guessFrame = await nextFrame(alice);
+    while (guessFrame.type === "gamePlay" && guessFrame.phase === "vote") {
+      guessFrame = await nextFrame(alice);
+    }
     expect(guessFrame.type).toBe("gamePlay");
     expect(guessFrame.phase).toBe("guess");
 
-    // Nobody guesses; the 150ms deadline passes and the game ends crewmates-win.
-    const ended = await nextFrame(alice, 3000);
+    // Nobody guesses; the 150ms deadline passes. I-5: the "over" play view
+    // is broadcast first, then gameEnded closes the game. Drain any stray
+    // late vote/guess broadcasts that arrive out of order.
+    let overPlay = await nextFrame(alice, 3000);
+    while (overPlay.type === "gamePlay" && overPlay.phase !== "over") {
+      overPlay = await nextFrame(alice, 3000);
+    }
+    expect(overPlay.type).toBe("gamePlay");
+    expect(overPlay.phase).toBe("over");
+    expect(overPlay.outcome).toBe("crewmates-win");
+    // I-5: the over view reveals the secret word + who the slime was.
+    expect(overPlay.secretWord).toBeTruthy();
+    expect(Array.isArray(overPlay.impostorIds)).toBe(true);
+    // gameEnded follows the over view (may have stray late vote broadcasts).
+    let ended = await nextFrame(alice, 3000);
+    while (ended.type === "gamePlay") {
+      ended = await nextFrame(alice, 3000);
+    }
     expect(ended.type).toBe("gameEnded");
     expect(ended.outcome).toBe("crewmates-win");
   });
@@ -890,7 +1022,7 @@ describe("game protocol", () => {
     const bob = await connect(BOB);
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
     const carol = await connect(CAROL);
-    const sockets: Record<string, WebSocket> = { "1": alice, "2": bob, "3": carol };
+    const sockets: Record<string, WebSocket> = { alice, bob, carol };
     const joinWaiters: Record<string, Promise<Record<string, any>>[]> = {
       "1": [nextFrame(alice), nextFrame(alice)],
       "2": [nextFrame(bob), nextFrame(bob)],
@@ -929,19 +1061,33 @@ describe("game protocol", () => {
     }
     expect(play.phase).toBe("vote");
 
-    // Rotate votes so the top is a 1-1-1 tie.
-    alice.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "2" }));
-    bob.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "3" }));
-    carol.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "1" }));
+    // Rotate votes so the top is a 1-1-1 tie. Each vote broadcasts a live
+    // tally now (I-1), so drain intermediate vote-phase frames.
+    alice.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "bob" }));
+    bob.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "carol" }));
+    carol.send(JSON.stringify({ type: "gameVote", gameId, votedForId: "alice" }));
 
-    const ended = await nextFrame(alice);
+    // I-5: the "over" play view (tie screen) is broadcast first, then
+    // gameEnded closes the game.
+    let overPlay = await nextFrame(alice);
+    while (overPlay.type === "gamePlay" && overPlay.phase === "vote") {
+      overPlay = await nextFrame(alice);
+    }
+    expect(overPlay.type).toBe("gamePlay");
+    expect(overPlay.phase).toBe("over");
+    expect(overPlay.outcome).toBe("tie");
+    // gameEnded follows the over view (may have stray late vote broadcasts).
+    let ended = await nextFrame(alice);
+    while (ended.type === "gamePlay") {
+      ended = await nextFrame(alice);
+    }
     expect(ended.type).toBe("gameEnded");
     expect(ended.outcome).toBe("tie");
   });
 
   it("blocks soft-leavers from playing until they rejoin", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const atBob = nextFrame(bob);
     const atAlice = nextFrame(alice);
@@ -956,8 +1102,8 @@ describe("game protocol", () => {
   });
 
   it("advances the turn when the hint timer expires", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    const { playAlice } = await startGameFor(alice, bob, gameId, { hintTimeMs: 150 });
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    const { playAlice } = await startGameFor(alice, bob, carol, gameId, { hintTimeMs: 150 });
     const firstTurn = playAlice.turnPlayerId;
 
     // Nobody submits; the 150ms hint deadline passes and the server skips.
@@ -968,6 +1114,8 @@ describe("game protocol", () => {
   });
 
   it("runs Complete the Funny answering and voting over the wire", async () => {
+    // 4 players so each per-prompt matchup has 3 answers (split into
+    // groups of 3), leaving ≥1 eligible voter per matchup (CTF-9/CTF-2).
     const alice = await connect(ALICE);
     alice.send(
       JSON.stringify({
@@ -982,17 +1130,20 @@ describe("game protocol", () => {
     const bob = await connect(BOB);
     await db.run("INSERT INTO room_members (user_id, room_id) VALUES (3, 555)");
     const carol = await connect(CAROL);
-    const sockets: Record<string, WebSocket> = { "1": alice, "2": bob, "3": carol };
-    // Same frame-count discipline as the impostor game: every room member
-    // sees both join broadcasts, so each socket gets exactly 2 gameState
-    // frames regardless of async delivery order.
+    await db.run("INSERT INTO room_members (user_id, room_id) VALUES (4, 555)");
+    const dave = await connect(DAVE);
+    const sockets: Record<string, WebSocket> = { alice, bob, carol, dave };
+    const names = ["alice", "bob", "carol", "dave"];
+    // 3 joins → 3 gameState frames per member.
     const joinWaiters: Record<string, Promise<Record<string, any>>[]> = {
-      "1": [nextFrame(alice), nextFrame(alice)],
-      "2": [nextFrame(bob), nextFrame(bob)],
-      "3": [nextFrame(carol), nextFrame(carol)],
+      "1": [nextFrame(alice), nextFrame(alice), nextFrame(alice)],
+      "2": [nextFrame(bob), nextFrame(bob), nextFrame(bob)],
+      "3": [nextFrame(carol), nextFrame(carol), nextFrame(carol)],
+      "4": [nextFrame(dave), nextFrame(dave), nextFrame(dave)],
     };
     bob.send(JSON.stringify({ type: "gameJoin", gameId }));
     carol.send(JSON.stringify({ type: "gameJoin", gameId }));
+    dave.send(JSON.stringify({ type: "gameJoin", gameId }));
     for (const waiters of Object.values(joinWaiters)) {
       for (const frame of waiters) {
         expect((await frame).type).toBe("gameState");
@@ -1003,64 +1154,77 @@ describe("game protocol", () => {
       JSON.stringify({
         type: "gameStart",
         gameId,
-        settings: { promptsPerPlayer: 2, rounds: 1 },
+        settings: { promptsPerPlayer: 2, rounds: 1, voteTimeMs: 30_000 },
       })
     );
     const play = await nextFrame(alice);
     expect(play.type).toBe("gamePlay");
     expect(play.game).toBe("complete-the-funny");
     expect(play.phase).toBe("answering");
-    expect(play.prompts["1"]).toHaveLength(2);
-    expect(play.prompts["2"]).toEqual(play.prompts["1"]);
+    expect(play.prompts["alice"]).toHaveLength(2);
+    expect(play.prompts["bob"]).toEqual(play.prompts["alice"]);
 
     // Everyone answers their two prompts; the last answer flips to voting.
-    for (const ws of [alice, bob, carol]) {
+    for (const ws of [alice, bob, carol, dave]) {
       ws.send(
         JSON.stringify({ type: "gameAnswer", gameId, answers: ["funny a", "funny b"] })
       );
     }
-    // Each answer broadcasts a gamePlay; the last one flips to voting. The
-    // async broadcasts can interleave, but there are exactly three, so read
-    // all three and pick out the voting one regardless of order.
+    // Each answer broadcasts a gamePlay; the last one flips to voting.
     const afterAnswers: Record<string, any>[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       afterAnswers.push(await nextFrame(alice));
     }
     expect(afterAnswers.every((f) => f.type === "gamePlay")).toBe(true);
     const voting = afterAnswers.find((f) => f.phase === "voting");
     expect(voting).toBeDefined();
     if (!voting) throw new Error("expected a voting frame");
-    expect(voting.phases.map((p: any) => p.answers.length)).toEqual([4, 2]);
-
-    // Vote both phases; the last vote resolves the round → gameEnded.
-    const phase0 = voting.phases[0];
-    const eligible0 = ["1", "2", "3"].filter(
-      (id) => !phase0.answers.some((a: any) => a.playerId === id)
-    );
-    const target0 = phase0.answers[0].id;
-    for (const voter of eligible0) {
-      sockets[voter].send(
-        JSON.stringify({ type: "gameVote", gameId, phaseIndex: 0, answerId: target0 })
-      );
-    }
-    const phase1 = voting.phases[1];
-    const eligible1 = ["1", "2", "3"].filter(
-      (id) => !phase1.answers.some((a: any) => a.playerId === id)
-    );
-    const target1 = phase1.answers[0].id;
-    for (const voter of eligible1) {
-      sockets[voter].send(
-        JSON.stringify({ type: "gameVote", gameId, phaseIndex: 1, answerId: target1 })
-      );
+    // CTF-9: matchups are per-prompt. 2 prompts → ≥2 matchups, each with
+    // ≤3 answers (4 players split into groups of 3).
+    expect(voting.currentMatchup).toBe(0);
+    expect(voting.voteDeadline).toBeTruthy();
+    for (const m of voting.phases) {
+      expect(m.answers.length).toBeLessThanOrEqual(3);
+      expect(m.answers.length).toBeGreaterThanOrEqual(2);
     }
 
+    // CTF-2: synchronized voting — the eligible voters vote on the current
+    // matchup, the room advances, then they vote on the next, etc. The last
+    // vote of the last matchup resolves the round → the "over" play view is
+    // broadcast (CTF-6), then gameEnded.
+    const totalMatchups = voting.phases.length;
+    let overFrame: Record<string, any> | null = null;
+    for (let mi = 0; mi < totalMatchups; mi++) {
+      const matchup = voting.phases[mi];
+      const eligible = names.filter(
+        (id) => !matchup.answers.some((a: any) => a.playerId === id)
+      );
+      if (eligible.length === 0) continue;
+      const target = matchup.answers[0].id;
+      for (let vi = 0; vi < eligible.length; vi++) {
+        sockets[eligible[vi]].send(
+          JSON.stringify({ type: "gameVote", gameId, phaseIndex: mi, answerId: target })
+        );
+        const f = await nextFrame(alice);
+        expect(f.type).toBe("gamePlay");
+        // The last vote of the last matchup resolves to "over".
+        if (mi === totalMatchups - 1 && vi === eligible.length - 1) {
+          expect(f.phase).toBe("over");
+          overFrame = f;
+        }
+      }
+    }
+
+    // CTF-6: the over view was broadcast, now gameEnded closes the game.
+    expect(overFrame).not.toBeNull();
+    expect(overFrame!.leaderboard).toBeTruthy();
     const ended = await nextFrame(alice);
     expect(ended.type).toBe("gameEnded");
   });
 
   it("ends every game in a room when the room is deleted", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     gameCleanup.endGamesInRoom(555);
 
@@ -1072,8 +1236,8 @@ describe("game protocol", () => {
   });
 
   it("clears in-play timers when a room's games are ended", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId, { hintTimeMs: 150 });
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId, { hintTimeMs: 150 });
 
     gameCleanup.endGamesInRoom(555);
 
@@ -1084,20 +1248,23 @@ describe("game protocol", () => {
   });
 
   it("removes a player from the game when their socket closes (tab close)", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const atAlice = nextFrame(alice);
+    const atCarol = nextFrame(carol);
     bob.close();
     const state = await atAlice;
     expect(state.type).toBe("gameState");
-    expect(state.participantIds).toEqual(["1"]);
+    expect(state.participantIds).toEqual(["alice", "carol"]);
     expect(state.inactivePlayerIds).toEqual([]);
+    const carolState = await atCarol;
+    expect(carolState.participantIds).toEqual(["alice", "carol"]);
   });
 
   it("frees the one-game slot when a player's socket closes", async () => {
-    const { alice, bob, gameId } = await lobbyWithAliceAndBob();
-    await startGameFor(alice, bob, gameId);
+    const { alice, bob, carol, gameId } = await lobbyWithThreePlayers();
+    await startGameFor(alice, bob, carol, gameId);
 
     const atAlice = nextFrame(alice);
     bob.close();
@@ -1122,7 +1289,7 @@ describe("game protocol", () => {
     bob.close();
     const state = await atAlice;
     expect(state.type).toBe("gameState");
-    expect(state.participantIds).toEqual(["1"]);
+    expect(state.participantIds).toEqual(["alice"]);
   });
 });
 

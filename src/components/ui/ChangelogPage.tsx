@@ -18,6 +18,24 @@ export default function ChangelogPage({ onClose }: Props) {
         </div>
 
         <div className="space-y-6 text-xs text-[var(--text-secondary)]">
+          {/* ── tchat 1.3 ──────────────────────────────────────────────── */}
+          <div>
+            <h3 className="text-[var(--accent)] font-semibold text-sm mb-1 border-b border-[var(--border-primary)] pb-1">tchat 1.3</h3>
+            <div className="space-y-3 mt-2">
+              <div>
+                <h4 className="text-[var(--accent-light)] font-semibold mb-1">new features</h4>
+                <ul className="space-y-1 text-[var(--text-muted)]">
+                  <li>• Minigames — a 🎮 button next to the gif and upload buttons lets anyone in a room send a playable game invitation to the whole chat. Two games to start: <b>Impostor</b> and <b>Complete the Funny</b>.</li>
+                  <li>• Invitation cards — each game invitation renders as a live card in the chat showing the game name, host, and status (Lobby / In Progress / Ended). Click it to join.</li>
+                  <li>• Game window overlay — joining or creating a game opens it over the chat. A lobby shows every participant, marks the host, and lets the host tune the game's settings before pressing Start.</li>
+                  <li>• Impostor — everyone but the impostor sees the same secret word; the impostor gets only a hint about it. Players take turns submitting one hint each under a 30-second timer, then decide to go another round or vote. Vote out the impostor to guess the word and win, or get voted out as a crewmate to lose.</li>
+                  <li>• Complete the Funny — the host sets prompts per player, round count, and the answer time limit. Every player fills in answers to a set of funny prompts before they appear head-to-head: the room votes on the best answer for each prompt and points are shared out to the winners, leading to a final leaderboard.</li>
+                  <li>• Rejoin anytime — closing the game window keeps you in the game, so you can pop back in by clicking the invitation again. Leaving the room or closing the tab drops you out.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
           {/* ── tchat 1.2 ──────────────────────────────────────────────── */}
           <div>
             <h3 className="text-[var(--accent)] font-semibold text-sm mb-1 border-b border-[var(--border-primary)] pb-1">tchat 1.2</h3>
