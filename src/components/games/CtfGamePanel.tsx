@@ -10,6 +10,14 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { CtfPlayView, CtfViewMatchup } from "../../types";
+import {
+  COPY_CTF,
+  COPY as COPY_SHARED,
+  matchupProgress,
+  roundLabel,
+  voteLockedIn,
+  voteCountLabel,
+} from "./gameCopy";
 
 interface Props {
   view: CtfPlayView;
@@ -58,7 +66,7 @@ function AnsweringFlow({
     return (
       <div data-testid="ctf-panel" className="flex flex-col items-center gap-2 py-6 animate-[fadeIn_0.3s_ease]">
         <div className="text-2xl">✅</div>
-        <div className="text-sm text-[var(--text-muted)]">answers submitted — waiting for others…</div>
+        <div className="text-sm text-[var(--text-muted)]">{COPY_CTF.answersSubmitted}</div>
       </div>
     );
   }
@@ -83,7 +91,7 @@ function AnsweringFlow({
 
   return (
     <div data-testid="ctf-panel" className="flex flex-col gap-3">
-      <PhaseHeader round={view.round} phaseLabel="answering" right={<PointsBadge score={myScore} />} />
+      <PhaseHeader round={view.round} phaseLabel={COPY_CTF.phaseAnswering} right={<PointsBadge score={myScore} />} />
       <ProgressBar current={current + 1} total={myPrompts.length} />
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-[var(--text-muted)]">{current + 1}/{myPrompts.length}</span>
@@ -100,7 +108,7 @@ function AnsweringFlow({
           value={value}
           onChange={(e) => setAnswers((prev) => ({ ...prev, [current]: e.target.value }))}
           onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) advance(); }}
-          placeholder="type your funniest answer…"
+          placeholder={COPY_CTF.answerPlaceholder}
           maxLength={400}
           className="w-full border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
         />
@@ -111,7 +119,7 @@ function AnsweringFlow({
           onClick={advance}
           className="self-start text-xs border border-[var(--accent)] text-[var(--accent)] px-4 py-1.5 bg-[var(--accent)]/10 cursor-pointer hover:bg-[var(--accent)]/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLast ? "[ submit answers ]" : "[ next → ]"}
+          {isLast ? COPY_CTF.submitAnswersButton : COPY_CTF.nextButton}
         </button>
       </div>
     </div>
@@ -171,7 +179,7 @@ function SynchronizedVoting({
   if (!matchup) {
     return (
       <div data-testid="ctf-panel" className="text-sm text-[var(--text-muted)]">
-        waiting for matchups…
+        {COPY_CTF.waitingForMatchups}
       </div>
     );
   }
@@ -190,12 +198,12 @@ function SynchronizedVoting({
     <div data-testid="ctf-panel" className="flex flex-col gap-3">
       <PhaseHeader
         round={view.round}
-        phaseLabel="voting"
+        phaseLabel={COPY_CTF.phaseVoting}
         right={<PointsBadge score={myScore} />}
       />
       <ProgressBar current={current + 1} total={phases.length} />
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-[var(--text-muted)]">matchup {current + 1}/{phases.length}</span>
+        <span className="text-[11px] text-[var(--text-muted)]">{matchupProgress(current + 1, phases.length)}</span>
         {secondsLeft > 0 && (
           <CountdownPill seconds={secondsLeft} urgent={urgent} />
         )}
@@ -227,7 +235,7 @@ function SynchronizedVoting({
               >
                 {/* Player — small text on top */}
                 <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mb-1">
-                  {answer.playerId}{mine ? " (you)" : ""}
+                  {answer.playerId}{mine ? ` ${COPY_SHARED.youSuffix}` : ""}
                 </div>
                 {/* Answer — the largest, most important text */}
                 <div className="text-base text-[var(--text-primary)] font-medium leading-snug mb-2">
@@ -253,7 +261,7 @@ function SynchronizedVoting({
 
         {myVote !== null && (
           <div className="text-xs text-[var(--text-muted)] animate-[fadeIn_0.3s_ease]">
-            vote locked in — waiting for the room ({totalVoters} vote{totalVoters === 1 ? "" : "s"} in)…
+            {voteLockedIn(totalVoters)}
           </div>
         )}
       </div>
@@ -288,11 +296,11 @@ function FinalScoreboard({ view, meId }: { view: CtfPlayView; meId: string }) {
       ))}
       {iWon && (
         <div className="text-center text-xs text-[var(--accent)] uppercase tracking-widest animate-[fadeIn_0.6s_ease]">
-          ✦ you win ✦
+          {COPY_SHARED.youWinBanner}
         </div>
       )}
       <div className="text-center text-[11px] text-[var(--text-muted)] uppercase tracking-widest animate-[fadeIn_0.4s_ease]">
-        final scores
+        {COPY_CTF.finalScoresHeading}
       </div>
       {entries.map(([player, score], i) => (
         <ScoreRow
@@ -330,11 +338,11 @@ function PointsReveal({
   return (
     <div data-testid="ctf-points-reveal" className="flex flex-col gap-3 py-2 animate-[fadeIn_0.3s_ease]">
       <div className="text-center text-[11px] text-[var(--text-muted)] uppercase tracking-widest">
-        matchup resolved
+        {COPY_CTF.matchupResolved}
       </div>
       {isUnanimous && (
         <div className="text-center text-lg font-bold text-[var(--accent)] glow animate-[fadeIn_0.5s_ease]">
-          ⭐ UNANIMOUS! ⭐
+          {COPY_CTF.unanimousBanner}
         </div>
       )}
       <div className="flex flex-col gap-2">
@@ -353,14 +361,14 @@ function PointsReveal({
               style={{ animationDelay: knockedOff ? `${i * 0.1}s` : "0s" }}
             >
               <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mb-1">
-                {answer.playerId}{answer.playerId === meId ? " (you)" : ""}
+                {answer.playerId}{answer.playerId === meId ? ` ${COPY_SHARED.youSuffix}` : ""}
               </div>
               <div className="text-base text-[var(--text-primary)] font-medium mb-1">
                 {answer.text}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-[var(--text-muted)]">
-                  {answer.voteCount} vote{answer.voteCount === 1 ? "" : "s"}
+                  {voteCountLabel(answer.voteCount)}
                 </span>
                 {won && (
                   <span className="text-sm font-bold text-[var(--accent)] animate-[fadeIn_0.3s_ease]">
@@ -381,7 +389,7 @@ function PointsReveal({
 function PhaseHeader({ round, phaseLabel, right }: { round: number; phaseLabel: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 animate-[fadeIn_0.3s_ease]">
-      <span className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">round {round}</span>
+      <span className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">{roundLabel(round)}</span>
       <span className="text-[11px] text-[var(--text-muted)]">·</span>
       <span className="text-[11px] text-[var(--accent)] uppercase tracking-widest">{phaseLabel}</span>
       {right && <span className="ml-auto">{right}</span>}
@@ -412,7 +420,7 @@ function CountdownPill({ seconds, urgent }: { seconds: number; urgent: boolean }
 function PointsBadge({ score }: { score: number }) {
   return (
     <span className="text-[11px] font-bold px-2 py-0.5 border border-[var(--accent)]/40 text-[var(--accent)] bg-[var(--accent)]/10">
-      {score} pts
+      {score} {COPY_SHARED.pointsSuffix}
     </span>
   );
 }
@@ -435,7 +443,7 @@ function ScoreRow({ rank, player, score, meId, medal }: {
         <span className="text-sm">{medal}</span>
         <span className={`text-sm ${player === meId ? "text-[var(--accent-light)] font-semibold" : "text-[var(--text-primary)]"}`}>
           {player}
-          {player === meId && <span className="text-[10px] text-[var(--text-muted)] ml-1">(you)</span>}
+          {player === meId && <span className="text-[10px] text-[var(--text-muted)] ml-1">{COPY_SHARED.youSuffix}</span>}
         </span>
       </div>
       <span className="text-sm font-bold text-[var(--accent)]">{displayScore}</span>

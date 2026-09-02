@@ -11,6 +11,18 @@
  *   - I-8: game-like full-window framing, bolder cards, progress dots. */
 import { useEffect, useRef, useState } from "react";
 import type { GameRole, ImpostorPlayView } from "../../types";
+import {
+  COPY_IMPOSTOR,
+  decidedCount,
+  outcomeHeadline,
+  roundLabel,
+  tallyCount,
+  waitingForAnswer,
+  waitingForAnswerTail,
+  waitingForGuess,
+  youVotedFor,
+  votedOutLabel,
+} from "./gameCopy";
 
 interface Props {
   view: ImpostorPlayView;
@@ -23,13 +35,7 @@ interface Props {
   onGuess: (guess: string) => void;
 }
 
-const PHASE_LABELS: Record<ImpostorPlayView["phase"], string> = {
-  hint: "answers",
-  choose: "decide",
-  vote: "vote",
-  guess: "guess",
-  over: "result",
-};
+const PHASE_LABELS = COPY_IMPOSTOR.phaseLabels;
 
 export default function ImpostorGamePanel({ view, role, meId, participantIds, onHint, onChoose, onVote, onGuess }: Props) {
   const [hint, setHint] = useState("");
@@ -66,7 +72,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
   return (
     <div data-testid="impostor-panel" className="flex flex-col gap-3">
       <div key={`header-${view.phase}`} className="flex items-center gap-2 animate-[fadeIn_0.3s_ease]">
-        <span className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">round {view.round}</span>
+        <span className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">{roundLabel(view.round)}</span>
         <span className="text-[11px] text-[var(--text-muted)]">·</span>
         <span className="text-[11px] text-[var(--accent)] uppercase tracking-widest">{PHASE_LABELS[view.phase]}</span>
         {view.phase === "hint" && view.hintDeadline && <HintTimer deadline={view.hintDeadline} />}
@@ -87,13 +93,13 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
             <div className="flex flex-col gap-2 border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3 animate-[fadeIn_0.3s_ease]">
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-xs text-[var(--text-muted)]">
-                  {isImpostor ? "your hint category:" : "the secret word:"}
+                  {isImpostor ? COPY_IMPOSTOR.yourHintCategory : COPY_IMPOSTOR.theSecretWord}
                 </span>
                 <span className={`text-lg font-bold ${isImpostor ? "text-[var(--error)]" : "text-[var(--accent)] glow"}`}>
                   {isImpostor ? role?.hint : role?.secretWord}
                 </span>
               </div>
-              <div className="text-xs text-[var(--text-primary)]">it's your turn — give a one-word answer.</div>
+              <div className="text-xs text-[var(--text-primary)]">{COPY_IMPOSTOR.yourTurnOneWord}</div>
               <div className="flex gap-2 w-full">
                 <input
                   data-testid="impostor-hint-input"
@@ -105,7 +111,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
                       setHint("");
                     }
                   }}
-                  placeholder="give a one-word answer…"
+                  placeholder={COPY_IMPOSTOR.answerPlaceholder}
                   maxLength={100}
                   autoFocus
                   className="flex-1 border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
@@ -117,13 +123,14 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
                   onClick={() => { onHint(hint.trim()); setHint(""); }}
                   className="text-xs border border-[var(--accent)] text-[var(--accent)] px-4 py-1.5 bg-[var(--accent)]/10 cursor-pointer hover:bg-[var(--accent)]/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  [ submit answer ]
+                  {COPY_IMPOSTOR.submitAnswerButton}
                 </button>
               </div>
             </div>
           ) : (
             <div className="text-xs text-[var(--text-muted)] animate-pulse">
-              waiting for <span className="text-[var(--accent)] glow">{view.turnPlayerId}</span> to give an answer…
+              waiting for <span className="text-[var(--accent)] glow">{view.turnPlayerId}</span> {" "}
+              {waitingForAnswerTail(view.turnPlayerId ?? "")}
             </div>
           )}
         </div>
@@ -133,7 +140,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
         <div key={`choose-${view.phase}`} className="animate-[slideIn_0.25s_ease] flex flex-col gap-3">
           {/* I-6: the choose screen also shows the round's answers. */}
           <AnswersList view={view} meId={meId} />
-          <div className="text-sm text-[var(--text-primary)]">the slime is among you. continue, or force a vote?</div>
+          <div className="text-sm text-[var(--text-primary)]">{COPY_IMPOSTOR.choosePrompt}</div>
           <div className="flex gap-2">
             <button
               type="button"
@@ -142,7 +149,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
               disabled={choice !== null}
               className={`text-xs px-5 py-2 transition-all duration-200 cursor-pointer border active:scale-95 ${choice === "continue" ? "border-[var(--accent)] bg-[var(--accent)]/20 text-[var(--accent-light)] glow" : "border-[var(--border-primary)] hover:border-[var(--accent)]"} ${choice !== null && choice !== "continue" ? "opacity-40" : ""}`}
             >
-              [ continue ]
+              {COPY_IMPOSTOR.continueButton}
             </button>
             <button
               type="button"
@@ -151,7 +158,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
               disabled={choice !== null}
               className={`text-xs px-5 py-2 transition-all duration-200 cursor-pointer border active:scale-95 ${choice === "vote" ? "border-[var(--error)] bg-[var(--error)]/15 text-[var(--error)] glow" : "border-[var(--error)]/60 text-[var(--error)] hover:bg-[var(--error)]/10"} ${choice !== null && choice !== "vote" ? "opacity-40" : ""}`}
             >
-              [ force a vote ]
+              {COPY_IMPOSTOR.forceVoteButton}
             </button>
           </div>
           {/* I-1: running tally of both options. */}
@@ -166,13 +173,12 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
 
       {view.phase === "vote" && (
         <div key={`vote-${view.phase}`} className="animate-[slideIn_0.25s_ease] flex flex-col gap-3">
-          {view.votedOutId ? (
-            <div data-testid="impostor-voted-out" className="text-sm text-[var(--accent)] font-semibold animate-[fadeIn_0.4s_ease]">
-              voted out: {view.votedOutId}
+          {view.votedOutId ? (              <div data-testid="impostor-voted-out" className="text-sm text-[var(--accent)] font-semibold animate-[fadeIn_0.4s_ease]">
+              {votedOutLabel(view.votedOutId!)}
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <div className="text-sm text-[var(--text-primary)]">vote out the slime:</div>
+              <div className="text-sm text-[var(--text-primary)]">{COPY_IMPOSTOR.votePrompt}</div>
               {participantIds.filter((p) => p !== meId).map((p) => {
                 const selected = vote === p;
                 const voteCount = view.votes
@@ -207,7 +213,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
               })}
               {vote && (
                 <div className="text-[10px] text-[var(--text-muted)] animate-[fadeIn_0.3s_ease] mt-1">
-                  you voted for {vote} — waiting for others…
+                  {youVotedFor(vote)}
                 </div>
               )}
             </div>
@@ -219,9 +225,9 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
         <div key={`guess-${view.phase}`} className="animate-[slideIn_0.25s_ease] flex flex-col gap-3">
           {view.votedOutId === meId ? (
             <div className="flex flex-col gap-2 border border-[var(--error)]/30 bg-[var(--error)]/5 p-3">
-              <div className="text-sm text-[var(--error)] font-semibold">you were voted out. guess the real word!</div>
+              <div className="text-sm text-[var(--error)] font-semibold">{COPY_IMPOSTOR.guessPrompt}</div>
               <div className="text-xs text-[var(--text-muted)]">
-                your hint category was: <span className="text-[var(--error)] font-bold">{role?.hint}</span>
+                {COPY_IMPOSTOR.guessHintLabel} <span className="text-[var(--error)] font-bold">{role?.hint}</span>
               </div>
               <div className="flex gap-2 w-full">
                 <input
@@ -234,7 +240,7 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
                       setGuess("");
                     }
                   }}
-                  placeholder="what is your answer?"
+                  placeholder={COPY_IMPOSTOR.guessPlaceholder}
                   maxLength={100}
                   autoFocus
                   className="flex-1 border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--error)] transition-colors"
@@ -246,13 +252,13 @@ export default function ImpostorGamePanel({ view, role, meId, participantIds, on
                   onClick={() => { onGuess(guess.trim()); setGuess(""); }}
                   className="text-xs border border-[var(--accent)] text-[var(--accent)] px-4 py-1.5 bg-[var(--accent)]/10 cursor-pointer hover:bg-[var(--accent)]/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  [ submit answer ]
+                  {COPY_IMPOSTOR.submitAnswerButton}
                 </button>
               </div>
             </div>
           ) : (
             <div className="text-sm text-[var(--text-muted)] animate-pulse">
-              waiting for {view.votedOutId} to guess the word…
+              {waitingForGuess(view.votedOutId!)}
             </div>
           )}
         </div>
@@ -277,14 +283,14 @@ function RoleReveal({ role, isImpostor, onDismiss }: { role: GameRole; isImposto
     <div data-testid="impostor-role-reveal" className="flex flex-col items-center gap-3 py-8 animate-[fadeIn_0.4s_ease]">
       <div className={`text-5xl ${isImpostor ? "animate-bounce" : ""}`}>{isImpostor ? "🟢" : "🛡️"}</div>
       <div className={`text-2xl font-bold ${isImpostor ? "text-[var(--error)] glow" : "text-[var(--accent)] glow"}`}>
-        {isImpostor ? "you are the slime!" : "you are a crewmate"}
+        {isImpostor ? COPY_IMPOSTOR.revealYouAreSlime : COPY_IMPOSTOR.revealYouAreCrewmate}
       </div>
       <div className="text-xs text-[var(--text-muted)] text-center max-w-xs">
-        {isImpostor ? "blend in. give answers like you know the word. don't get caught." : "find the slime among you. they don't know the word!"}
+        {isImpostor ? COPY_IMPOSTOR.revealSlimeBlurb : COPY_IMPOSTOR.revealCrewmateBlurb}
       </div>
       <div className="mt-3 flex flex-col items-center gap-1">
         <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">
-          {isImpostor ? "your hint category" : "the secret word is"}
+          {isImpostor ? COPY_IMPOSTOR.revealHintLabel : COPY_IMPOSTOR.revealWordLabel}
         </div>
         <div className={`text-3xl font-bold ${isImpostor ? "text-[var(--error)]" : "text-[var(--accent)] glow"}`}>
           {isImpostor ? role.hint : role.secretWord}
@@ -296,7 +302,7 @@ function RoleReveal({ role, isImpostor, onDismiss }: { role: GameRole; isImposto
         onClick={onDismiss}
         className="mt-3 text-xs border border-[var(--accent)] text-[var(--accent)] px-5 py-2 bg-[var(--accent)]/10 cursor-pointer hover:bg-[var(--accent)]/20 transition-colors"
       >
-        [ got it → ]
+        {COPY_IMPOSTOR.revealGotItButton}
       </button>
     </div>
   );
@@ -340,19 +346,19 @@ function OverScreen({ view, role, meId }: { view: ImpostorPlayView; role: GameRo
       </div>
       {word && (
         <div className="text-center text-sm text-[var(--text-muted)]">
-          the word was{" "}
+          {COPY_IMPOSTOR.outcomeWordLabel}{" "}
           <span className="text-lg font-bold text-[var(--accent)] glow">{word}</span>
         </div>
       )}
       {role?.hint && wasSlime && (
         <div className="text-center text-sm text-[var(--text-muted)]">
-          your hint was{" "}
+          {COPY_IMPOSTOR.outcomeHintLabel}{" "}
           <span className="text-lg font-bold text-[var(--error)]">{role.hint}</span>
         </div>
       )}
       {slimeNames && (
         <div className="text-center text-xs text-[var(--text-muted)]">
-          the slime was <span className="text-[var(--error)] font-semibold">{slimeNames}</span>
+          {COPY_IMPOSTOR.outcomeSlimeLabel} <span className="text-[var(--error)] font-semibold">{slimeNames}</span>
         </div>
       )}
     </div>
@@ -378,7 +384,7 @@ function AnswersList({
   const hasCurrent = Object.keys(view.hints).length > 0;
   if (!hasPast && !hasCurrent) {
     return (
-      <div className="text-xs text-[var(--text-muted)] italic">no answers yet — be the first!</div>
+      <div className="text-xs text-[var(--text-muted)] italic">{COPY_IMPOSTOR.noAnswersYet}</div>
     );
   }
   return (
@@ -389,7 +395,7 @@ function AnswersList({
           .map(([round, roundHints]) => (
             <RoundAnswers
               key={`past-${round}`}
-              label={`round ${round}`}
+              label={roundLabel(Number(round))}
               roundHints={roundHints}
               highlightGiver={highlightGiver}
               meId={meId}
@@ -397,7 +403,7 @@ function AnswersList({
           ))}
       {hasCurrent && (
         <RoundAnswers
-          label={`round ${view.round}`}
+          label={roundLabel(view.round)}
           roundHints={view.hints}
           highlightGiver={highlightGiver}
           meId={meId}
@@ -438,7 +444,7 @@ function RoundAnswers({
               {giver}:
             </span>
             <span className="text-[var(--text-primary)] font-medium">{text}</span>
-            {isCurrent && <span className="text-[10px] text-[var(--accent)] ml-auto shrink-0">▾ answering</span>}
+            {isCurrent && <span className="text-[10px] text-[var(--accent)] ml-auto shrink-0">{COPY_IMPOSTOR.answerTag}</span>}
           </div>
         );
       })}
@@ -500,9 +506,9 @@ function ChooseTally({
   return (
     <div data-testid="impostor-choose-tally" className="flex flex-col gap-2 text-[11px] animate-[fadeIn_0.3s_ease]">
       <div className="flex items-center gap-3">
-        <span className="text-[var(--accent)]">continue: {continueCount}</span>
-        <span className="text-[var(--error)]">force a vote: {voteCount}</span>
-        <span className="ml-auto text-[var(--text-muted)]">{decided}/{total} decided</span>
+        <span className="text-[var(--accent)]">{tallyCount(COPY_IMPOSTOR.tallyContinueLabel, continueCount)}</span>
+        <span className="text-[var(--error)]">{tallyCount(COPY_IMPOSTOR.tallyVoteLabel, voteCount)}</span>
+        <span className="ml-auto text-[var(--text-muted)]">{decidedCount(decided, total)}</span>
       </div>
       {/* Progress bar */}
       <div className="h-1.5 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] overflow-hidden">
@@ -520,7 +526,7 @@ function ChooseTally({
             {voter}
           </span>
         ))}
-        {myChoice === null && <span className="italic">— your move</span>}
+        {myChoice === null && <span className="italic">{COPY_IMPOSTOR.yourMove}</span>}
       </div>
     </div>
   );
@@ -543,11 +549,5 @@ function HintTimer({ deadline }: { deadline: number }) {
 }
 
 function outcomeLabel(outcome: string | null): string {
-  switch (outcome) {
-    case "crewmates-win": return "🛡️ the crewmates win";
-    case "crewmates-lose": return "🟢 the slime decimated the crewmates";
-    case "draw": return "🟢 the slime guessed the word — draw";
-    case "tie": return "🤝 tie — no one was voted out";
-    default: return outcome ?? "game over";
-  }
+  return outcomeHeadline(outcome);
 }

@@ -1,6 +1,7 @@
 /** Host-only lobby settings editor — per-game fields sent as settings on
  *  gameStart. ms timers are edited in seconds. */
 import type { GameSettings } from "../../types";
+import { COPY as COPY_SHARED, COPY_SETTINGS } from "./gameCopy";
 
 interface Props {
   gameType: "impostor" | "complete-the-funny";
@@ -11,22 +12,28 @@ interface Props {
 
 const FIELDS: Record<
   Props["gameType"],
-  { key: keyof GameSettings; label: string; min?: number; max?: number; step?: number; hint?: string }[]
+  { key: keyof GameSettings; min?: number; max?: number; step?: number }[]
 > = {
   impostor: [
-    { key: "impostorCount", label: "number of slimes (impostors)", min: 1, hint: "default 1" },
-    { key: "maxRounds", label: "max rounds", min: 1, max: 100, hint: "default 5" },
-    { key: "hintTimeMs", label: "seconds to give a hint", min: 5, step: 1, hint: "default 30 s" },
-    { key: "wordViewMs", label: "seconds to view your word", min: 2, step: 1, hint: "default 10 s" },
-    { key: "guessTimeMs", label: "seconds to guess after being voted out", min: 5, step: 1, hint: "default 30 s" },
+    { key: "impostorCount", min: 1 },
+    { key: "maxRounds", min: 1, max: 100 },
+    { key: "hintTimeMs", min: 5, step: 1 },
+    { key: "wordViewMs", min: 2, step: 1 },
+    { key: "guessTimeMs", min: 5, step: 1 },
   ],
   "complete-the-funny": [
-    { key: "promptsPerPlayer", label: "prompts per player", min: 2, hint: "default 4" },
-    { key: "rounds", label: "rounds", min: 1, hint: "default 3" },
-    { key: "answerTimeLimitMs", label: "seconds to answer", min: 5, step: 1, hint: "default 60 s" },
-    { key: "voteTimeMs", label: "seconds to vote per matchup", min: 5, step: 1, hint: "default 30 s" },
+    { key: "promptsPerPlayer", min: 2 },
+    { key: "rounds", min: 1 },
+    { key: "answerTimeLimitMs", min: 5, step: 1 },
+    { key: "voteTimeMs", min: 5, step: 1 },
   ],
 };
+
+/** Labels + default hints for each settings key, from the shared copy file. */
+function labelFor(gameType: Props["gameType"], key: keyof GameSettings): { label: string; hint?: string } {
+  const entry = (COPY_SETTINGS[gameType] as Record<string, { label: string; hint?: string }>)[key];
+  return entry ?? { label: key };
+}
 
 /**
  * Host-adjustable lobby settings (spec §4/§6.1). ms settings are edited in
@@ -36,9 +43,10 @@ export default function GameSettingsPanel({ gameType, settings, onChange }: Prop
   return (
     <div data-testid="game-settings" className="flex flex-col gap-2 mt-3">
       <div className="text-[11px] text-[var(--text-muted)] uppercase tracking-widest">
-        host settings
+        {COPY_SHARED.hostSettingsHeading}
       </div>
-      {FIELDS[gameType].map(({ key, label, min = 1, max, step = 1, hint }) => {
+      {FIELDS[gameType].map(({ key, min = 1, max, step = 1 }) => {
+        const { label, hint } = labelFor(gameType, key);
         const raw = settings[key];
         // ms fields are edited as seconds on the client.
         const display =

@@ -9,6 +9,7 @@ import type {
   GameSettings,
 } from "../../types";
 import { gameTypeName } from "../../utils/games";
+import { COPY, participantsHeading } from "./gameCopy";
 import ImpostorGamePanel from "./ImpostorGamePanel";
 import CtfGamePanel from "./CtfGamePanel";
 import GameSettingsPanel from "./GameSettingsPanel";
@@ -73,22 +74,22 @@ export default function GameOverlay({
           data-testid="game-status"
           className="text-[10px] text-[var(--text-muted)] border border-[var(--border-primary)] px-1 py-0.5"
         >
-          {isEnded ? "Game Over" : game.status === "playing" ? "In Progress" : "Lobby"}
+          {isEnded ? COPY.statusGameOver : game.status === "playing" ? COPY.statusInProgress : COPY.statusLobby}
         </span>
         <button
           type="button"
           onClick={onClose}
           data-testid="game-overlay-close"
-          title="Close the game window (you can rejoin by clicking the invitation)"
+          title={COPY.closeTitle}
           className="ml-auto text-[var(--text-muted)] text-xs border border-[var(--border-primary)] px-2 py-0.5 bg-transparent cursor-pointer hover:text-[var(--error)] hover:border-[var(--error)]/50 transition-colors"
         >
-          [ close ]
+          {COPY.closeButton}
         </button>
       </div>
 
       <div className="flex-1 px-3 py-2">
         <div className="text-xs text-[var(--text-muted)] uppercase tracking-widest mb-1">
-          participants ({game.participantIds.length})
+          {participantsHeading(game.participantIds.length)}
         </div>
         <div data-testid="game-participants" className="flex flex-col gap-1">
           {game.participantIds.map((id) => (
@@ -100,7 +101,7 @@ export default function GameOverlay({
               <span>{id}</span>
               {currentUserId !== null && id === viewerId && (
                 <span className="text-[10px] text-[var(--accent)] border border-[var(--accent)]/40 px-1 py-0.5">
-                  host
+                  {COPY.hostBadge}
                 </span>
               )}
             </div>
@@ -121,12 +122,12 @@ export default function GameOverlay({
                 data-testid="game-start-button"
                 className="mt-1 self-start text-xs border border-[var(--accent)] text-[var(--accent)] px-3 py-1 bg-[var(--accent)]/10 cursor-pointer hover:bg-[var(--accent)]/20 transition-colors"
               >
-                [ start game ]
+                {COPY.startButton}
               </button>
             </div>
           ) : (
             <div className="mt-3 text-xs text-[var(--text-muted)]">
-              waiting for the host to start…
+              {COPY.waitingForHost}
             </div>
           )
         ) : playView?.game === "impostor" ? (
@@ -151,7 +152,7 @@ export default function GameOverlay({
           />
         ) : (
           <div className="mt-3 text-xs text-[var(--text-muted)]">
-            the game is in progress
+            {COPY.gameInProgressMessage}
           </div>
         )}
       </div>
